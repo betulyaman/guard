@@ -1,6 +1,7 @@
 #include "preoperation_callbacks.h"
 
 #include "pending_operation_list.h"
+#include "communication.h"
 
 #include <fltKernel.h>
 #include <ntstrsafe.h>
@@ -39,21 +40,33 @@ FLT_PREOP_CALLBACK_STATUS pre_operation_callback(
 	UNREFERENCED_PARAMETER(filter_objects);
 	UNREFERENCED_PARAMETER(completion_callback);
 
-	if (data->Iopb->MajorFunction == IRP_MJ_SET_INFORMATION) {
-		FILE_INFORMATION_CLASS file_information_class = data->Iopb->Parameters.SetFileInformation.FileInformationClass;
-		if (file_information_class == FileDispositionInformation ||
-			file_information_class == FileDispositionInformationEx) {
-
-			NTSTATUS status = add_operation_to_pending_list(data, g_operation_id);
-			if (!NT_SUCCESS(status)) {
-				data->IoStatus.Status = STATUS_UNSUCCESSFUL;
-				return FLT_PREOP_COMPLETE;
-			}
-
-			g_operation_id++;
-
-		}
+	OPERATION_TYPE operation_type = get_operation_type(data, filter_objects);
+	if (operation_type == OPERATION_TYPE_INVALID) {
+		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
 
-	return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	CONFIRMATION_MESSAGE message;
+	NTSTATUS status = create_confirmation_message(data, g_operation_id, operation_type, &message, filter_objects);
+	if (!NT_SUCCESS(status)) {
+		data->IoStatus.Status = STATUS_UNSUCCESSFUL;
+		return FLT_PREOP_COMPLETE;
+	}
+
+	status = send_message_to_user(&message);
+	if (!NT_SUCCESS(status)) {
+		data->IoStatus.Status = STATUS_UNSUCCESSFUL;
+		return FLT_PREOP_COMPLETE;
+	}
+
+	status = add_operation_to_pending_list(data, g_operation_id);
+	if (!NT_SUCCESS(status)) {
+		data->IoStatus.Status = STATUS_UNSUCCESSFUL;
+		return FLT_PREOP_COMPLETE;
+	}
+
+	g_operation_id++;
+	
+	pending_operation_list_timeout_clear();
+
+	return FLT_PREOP_PENDING;
 }

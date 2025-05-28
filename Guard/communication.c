@@ -5,6 +5,8 @@
 
 #include <ntstrsafe.h>
 
+NTSTATUS get_file_name(_Inout_ PFLT_CALLBACK_DATA data, _Out_ PUNICODE_STRING file_name);
+
 NTSTATUS connect_notify_callback(
 	_In_ PFLT_PORT client_port,
 	_In_ PVOID server_port_cookie,
@@ -70,4 +72,197 @@ NTSTATUS create_communication_port()
 	}
 
 	return status;
+}
+
+NTSTATUS create_confirmation_message(_In_ PFLT_CALLBACK_DATA data, _In_ ULONG operation_id, _In_ OPERATION_TYPE operation_type, _Out_ CONFIRMATION_MESSAGE* message, PCFLT_RELATED_OBJECTS filter_objects) {
+
+    if (message == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    message->operation_id = operation_id;
+    message->operation_type = operation_type;
+
+    if (operation_type == OPERATION_TYPE_RENAME || operation_type == OPERATION_TYPE_MOVE) {
+
+        PFILE_RENAME_INFORMATION rename_info = (PFILE_RENAME_INFORMATION)data->Iopb->Parameters.SetFileInformation.InfoBuffer;
+        if (rename_info && rename_info->FileNameLength > 0) {
+
+            PFLT_FILE_NAME_INFORMATION source_name_info = NULL;
+            PFLT_FILE_NAME_INFORMATION dest_name_info = NULL;
+
+            // Get current (source) file name
+            NTSTATUS status = FltGetFileNameInformation(data,
+                FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_ALWAYS_ALLOW_CACHE_LOOKUP,
+                &source_name_info);
+            if (NT_SUCCESS(status)) {
+                FltParseFileNameInformation(source_name_info);
+
+                // Get destination (target) file name info
+                status = FltGetDestinationFileNameInformation(
+                    filter_objects->Instance,
+                    filter_objects->FileObject,
+                    rename_info->RootDirectory,
+                    rename_info->FileName,
+                    rename_info->FileNameLength,
+                    FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_ALWAYS_ALLOW_CACHE_LOOKUP,
+                    &dest_name_info);
+
+                if (dest_name_info->Name.Length > 0 && dest_name_info->Name.Length < sizeof(message->target_name)) {
+                    RtlCopyMemory(
+                        message->target_name,
+                        dest_name_info->Name.Buffer,
+                        dest_name_info->Name.Length
+                    );
+                    message->target_name[dest_name_info->Name.Length / sizeof(WCHAR)] = L'\0';
+                }
+
+                FltReleaseFileNameInformation(source_name_info);
+            }
+        }
+    }
+    else {
+        WCHAR buffer[MAX_FILE_NAME_LENGTH] = { 0 };
+        NTSTATUS status = RtlStringCchCopyW(message->target_name, 260, buffer);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+    }
+
+    WCHAR buffer[MAX_FILE_NAME_LENGTH];
+    UNICODE_STRING file_name = { .Length = 0, .MaximumLength = MAX_FILE_NAME_LENGTH, .Buffer = buffer };
+    NTSTATUS status = get_file_name(data, &file_name);
+    if (!NT_SUCCESS(status)) {
+        return FLT_PREOP_SUCCESS_NO_CALLBACK;
+    }
+
+    status = RtlStringCchCopyW(message->file_name, 260, file_name.Buffer);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS send_message_to_user(_In_ CONFIRMATION_MESSAGE* message)
+{
+    if (g_context.client_port == NULL) {
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    if (message == NULL) {
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    NTSTATUS status = FltSendMessage(
+        g_context.registered_filter,
+        &g_context.client_port,
+        message,
+        sizeof(CONFIRMATION_MESSAGE),
+        NULL,
+        NULL,
+        NULL
+    );
+
+    if (!NT_SUCCESS(status)) {
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    return STATUS_SUCCESS;
+}
+
+OPERATION_TYPE get_operation_type(PFLT_CALLBACK_DATA data, PCFLT_RELATED_OBJECTS filter_objects)
+{
+    OPERATION_TYPE operation_type = OPERATION_TYPE_INVALID;
+
+    if (data->Iopb->MajorFunction == IRP_MJ_CREATE) {
+        ULONG createOptions = data->Iopb->Parameters.Create.Options;
+
+        if ((createOptions & FILE_DELETE_ON_CLOSE) == FILE_DELETE_ON_CLOSE) {
+            operation_type = OPERATION_TYPE_FILE_ON_CLOSE;
+        }
+    }
+    else {
+        FILE_INFORMATION_CLASS file_information_class = data->Iopb->Parameters.SetFileInformation.FileInformationClass;
+        if (file_information_class == FileDispositionInformation ||
+            file_information_class == FileDispositionInformationEx) {
+
+            PFILE_DISPOSITION_INFORMATION file_information = (PFILE_DISPOSITION_INFORMATION)data->Iopb->Parameters.SetFileInformation.InfoBuffer;
+            if (file_information->DeleteFile) {
+                operation_type = OPERATION_TYPE_DELETE;
+            }
+        }
+        else if (file_information_class == FileRenameInformation || file_information_class == FileRenameInformationEx) {
+
+            PFILE_RENAME_INFORMATION rename_info = (PFILE_RENAME_INFORMATION)data->Iopb->Parameters.SetFileInformation.InfoBuffer;
+            if (rename_info && rename_info->FileNameLength > 0) {
+
+                PFLT_FILE_NAME_INFORMATION source_name_info = NULL;
+                PFLT_FILE_NAME_INFORMATION dest_name_info = NULL;
+
+                // Get current (source) file name
+                NTSTATUS status = FltGetFileNameInformation(data,
+                    FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_ALWAYS_ALLOW_CACHE_LOOKUP,
+                    &source_name_info);
+                if (NT_SUCCESS(status)) {
+                    FltParseFileNameInformation(source_name_info);
+
+                    // Get destination (target) file name info
+                    status = FltGetDestinationFileNameInformation(
+                        filter_objects->Instance,
+                        filter_objects->FileObject,
+                        rename_info->RootDirectory,
+                        rename_info->FileName,
+                        rename_info->FileNameLength,
+                        FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_ALWAYS_ALLOW_CACHE_LOOKUP,
+                        &dest_name_info);
+
+                    if (NT_SUCCESS(status)) {
+                        FltParseFileNameInformation(dest_name_info);
+
+                        // Compare directories
+                        if (RtlEqualUnicodeString(&source_name_info->ParentDir, &dest_name_info->ParentDir, TRUE)) {
+                            operation_type = OPERATION_TYPE_RENAME;
+                        }
+                        else {
+                            operation_type = OPERATION_TYPE_MOVE;
+                        }
+
+                        FltReleaseFileNameInformation(dest_name_info);
+                    }
+
+                    FltReleaseFileNameInformation(source_name_info);
+                }
+            }
+        }
+    }
+    return operation_type;
+}
+
+NTSTATUS get_file_name(_Inout_ PFLT_CALLBACK_DATA data, _Out_ PUNICODE_STRING file_name) {
+    if (file_name == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    PFLT_FILE_NAME_INFORMATION name_info;
+    NTSTATUS status = FltGetFileNameInformation(data, FLT_FILE_NAME_NORMALIZED, &name_info);
+    if (!NT_SUCCESS(status)) {
+        return status;
+    }
+
+    status = FltParseFileNameInformation(name_info);
+    if (!NT_SUCCESS(status)) {
+        FltReleaseFileNameInformation(name_info);
+        return status;
+    }
+
+    status = RtlUnicodeStringCopy(file_name, &name_info->Name);
+    if (!NT_SUCCESS(status)) {
+        FltReleaseFileNameInformation(name_info);
+        return status;
+    }
+
+    FltReleaseFileNameInformation(name_info);
+
+    return status;
 }
