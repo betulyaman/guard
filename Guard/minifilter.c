@@ -93,7 +93,7 @@ NTSTATUS filter_tear_down_callback(
 NTSTATUS register_filter(_In_ PDRIVER_OBJECT driver_object)
 {
 	CONST FLT_OPERATION_REGISTRATION callbacks[] = {
-	{ IRP_MJ_CREATE, 0, pre_create_operation_callback, NULL },
+	{ IRP_MJ_CREATE, 0, pre_operation_callback, NULL },
 	{ IRP_MJ_CLEANUP,0, pre_operation_callback, NULL },
 	{ IRP_MJ_CLOSE,  0, pre_operation_callback, NULL },
 	{ IRP_MJ_DIRECTORY_CONTROL, 0, pre_operation_callback, NULL },

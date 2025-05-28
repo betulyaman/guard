@@ -21,6 +21,22 @@ NTSTATUS connect_notify_callback(
 
 	FLT_ASSERT(g_context.client_port == NULL);
 
+    const ULONG expected_token = 0xA5A5A5A5;
+    
+    if (size_of_context != sizeof(USER_PROCESS_INFO)) {
+        return STATUS_ACCESS_DENIED;
+    }
+
+    USER_PROCESS_INFO context;
+    RtlCopyMemory(&context, connection_context, size_of_context);
+    if (context.token != expected_token) {
+        return STATUS_ACCESS_DENIED;
+    }
+
+    g_context.agent_process_id = context.process_id;
+
+    RtlCopyMemory(g_context.agent_path, context.path, sizeof(context.path));
+
 	g_context.client_port = client_port;
 	return STATUS_SUCCESS;
 }

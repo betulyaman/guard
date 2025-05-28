@@ -35,4 +35,10 @@ typedef struct {
 	WCHAR file_name[260];
 } CONFIRMATION_MESSAGE;
 
+typedef struct {
+	ULONG token;
+	LONG process_id;
+	WCHAR path[256];
+} USER_PROCESS_INFO;
+
 #endif //GUARD_COMMUNICATION_INFO_H
