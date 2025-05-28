@@ -2,10 +2,13 @@
 
 #include "global_context.h"
 #include "log.h"
+#include "pending_operation_list.h"
 
 #include <ntstrsafe.h>
 
 NTSTATUS get_file_name(_Inout_ PFLT_CALLBACK_DATA data, _Out_ PUNICODE_STRING file_name);
+LONG exception_handler(_In_ PEXCEPTION_POINTERS ExceptionPointer, _In_ BOOLEAN AccessingUserBuffer);
+
 
 NTSTATUS connect_notify_callback(
 	_In_ PFLT_PORT client_port,
@@ -78,7 +81,7 @@ NTSTATUS create_communication_port()
 		NULL,
 		connect_notify_callback,
 		disconnect_notify_callback,
-		NULL,
+        user_reply_notify_callback,
 		1);
 
 	FltFreeSecurityDescriptor(security_descriptor);
@@ -88,6 +91,57 @@ NTSTATUS create_communication_port()
 	}
 
 	return status;
+}
+
+// called whenever a user mode application wishes to communicate with the minifilter.
+NTSTATUS user_reply_notify_callback(
+    _In_ PVOID port_cookie,
+    _In_reads_bytes_opt_(input_buffer_length) PVOID input_buffer,
+    _In_ ULONG input_buffer_length,
+    _Out_writes_bytes_to_opt_(output_buffer_length, *return_output_buffer_length) PVOID output_buffer,
+    _In_ ULONG output_buffer_length,
+    _Out_ PULONG return_output_buffer_length
+) {
+    UNREFERENCED_PARAMETER(port_cookie);
+    UNREFERENCED_PARAMETER(output_buffer);
+    UNREFERENCED_PARAMETER(output_buffer_length);
+    *return_output_buffer_length = 0;
+
+    if ((input_buffer == NULL) ||
+        (input_buffer_length < (FIELD_OFFSET(USER_REPLY, operation_id) +
+            sizeof(USER_REPLY)))) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    USER_REPLY reply;
+    try {
+        reply.operation_id = ((USER_REPLY*)input_buffer)->operation_id;
+        reply.allow = ((USER_REPLY*)input_buffer)->allow;
+    } except(exception_handler(GetExceptionInformation(), TRUE)) {
+
+        return GetExceptionCode();
+    }
+
+    PENDING_OPERATION* replied_operation = pending_operation_list_remove_by_id(reply.operation_id);
+    if (replied_operation == NULL) {
+        // TODO replied operation doesnt exist in the pending list
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    if (reply.allow == TRUE) {
+        replied_operation->data->IoStatus.Status = STATUS_SUCCESS;
+        FltCompletePendedPreOperation(replied_operation->data, FLT_PREOP_SUCCESS_NO_CALLBACK, NULL);
+    }
+    else {
+        replied_operation->data->IoStatus.Status = STATUS_ACCESS_DENIED;
+        replied_operation->data->IoStatus.Information = 0;
+        FltCompletePendedPreOperation(replied_operation->data, FLT_PREOP_COMPLETE, NULL);
+
+    }
+
+    ExFreePoolWithTag(replied_operation, PENDING_OPERATION_TAG);
+
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS create_confirmation_message(_In_ PFLT_CALLBACK_DATA data, _In_ ULONG operation_id, _In_ OPERATION_TYPE operation_type, _Out_ CONFIRMATION_MESSAGE* message, PCFLT_RELATED_OBJECTS filter_objects) {
@@ -281,4 +335,24 @@ NTSTATUS get_file_name(_Inout_ PFLT_CALLBACK_DATA data, _Out_ PUNICODE_STRING fi
     FltReleaseFileNameInformation(name_info);
 
     return status;
+}
+
+
+LONG exception_handler(
+    _In_ PEXCEPTION_POINTERS ExceptionPointer,
+    _In_ BOOLEAN AccessingUserBuffer)
+{
+    NTSTATUS Status;
+
+    Status = ExceptionPointer->ExceptionRecord->ExceptionCode;
+
+    //  Certain exceptions shouldn't be dismissed within the filter
+    //  unless we're touching user memory.
+
+    if (!FsRtlIsNtstatusExpected(Status) &&
+        !AccessingUserBuffer) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    return EXCEPTION_EXECUTE_HANDLER;
 }

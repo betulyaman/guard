@@ -14,6 +14,15 @@ NTSTATUS connect_notify_callback(
 
 VOID disconnect_notify_callback(_In_opt_ PVOID connection_cookie);
 
+NTSTATUS user_reply_notify_callback(
+    _In_ PVOID port_cookie,
+    _In_reads_bytes_opt_(input_buffer_length) PVOID input_buffer,
+    _In_ ULONG input_buffer_length,
+    _Out_writes_bytes_to_opt_(output_buffer_length, *return_output_buffer_length) PVOID output_buffer,
+    _In_ ULONG output_buffer_length,
+    _Out_ PULONG return_output_buffer_length
+);
+
 NTSTATUS create_communication_port();
 
 NTSTATUS send_message_to_user(_In_ CONFIRMATION_MESSAGE* message);
