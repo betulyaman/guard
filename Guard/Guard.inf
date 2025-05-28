@@ -1,62 +1,59 @@
-;
-; Guard.inf
-;
-
 [Version]
-Signature   = "$WINDOWS NT$"
-Class       = System ; TODO: specify appropriate Class
-ClassGuid   = {4d36e97d-e325-11ce-bfc1-08002be10318} ; TODO: specify appropriate ClassGuid
-Provider    = %ManufacturerName%
-CatalogFile = Guard.cat
-DriverVer   = ; TODO: set DriverVer in stampinf property pages
+Signature   = "$Windows NT$"
+Class       = "ActivityMonitor"
+ClassGuid   = {b86dff51-a31e-4bac-b3cf-e8cfe75c9fc2}
+Provider    = %ProviderString%
+DriverVer   = 04/15/2025,1.0.0.0
+CatalogFile = guard.cat
 PnpLockdown = 1
 
-[DestinationDirs]
-DefaultDestDir = 13
-
-[SourceDisksNames]
-1 = %DiskName%,,,""
+Characteristics = 0x4000
 
 [SourceDisksFiles]
-Guard.sys = 1,,
+guard.sys = 1,,
 
-;*****************************************
-; Install Section
-;*****************************************
+[SourceDisksNames]
+1 = %DiskId1%,,,
 
-[Manufacturer]
-%ManufacturerName% = Standard,NT$ARCH$.10.0...16299 ; %13% support introduced in build 16299
+[DestinationDirs]
+GUARD.Files = 12 ;driver store
 
-[Standard.NT$ARCH$.10.0...16299]
-%Guard.DeviceDesc% = Guard_Device, Root\Guard ; TODO: edit hw-id
+[DefaultInstall.NT$ARCH$]
+OptionDesc          = %ServiceDescription%
+CopyFiles           = GUARD.Files,
 
-[Guard_Device.NT]
-CopyFiles = File_Copy
+[DefaultInstall.NT$ARCH$.Services]
+AddService          = %ServiceName%,,GUARD.Service
 
-[File_Copy]
-Guard.sys
+[GUARD.Service]
+DisplayName      = %ServiceName%
+Description      = %ServiceDescription%
+ServiceBinary    = %13%\%DriverName%.sys        ;%windir%\system32\drivers\
+Dependencies     = FltMgr
+ServiceType      = 2                            ;SERVICE_FILE_SYSTEM_DRIVER
+StartType        = 3                            ;SERVICE_DEMAND_START
+ErrorControl     = 1                            ;SERVICE_ERROR_NORMAL
+LoadOrderGroup   = "FSFilter Activity Monitor"
+AddReg           = GUARD.AddRegistry
 
-;-------------- Service installation
-[Guard_Device.NT.Services]
-AddService = Guard,%SPSVCINST_ASSOCSERVICE%, Guard_Service_Inst
+[GUARD.AddRegistry]
+HKR,"Parameters","SupportedFeatures",0x00010001,0x3
+HKR,"Parameters\Instances","DefaultInstance",0x00000000,%DefaultInstance%
+HKR,"Parameters\Instances\"%Instance1.Name%,"Altitude",0x00000000,%Instance1.Altitude%
+HKR,"Parameters\Instances\"%Instance1.Name%,"Flags",0x00010001,%Instance1.Flags%
 
-; -------------- Guard driver install sections
-[Guard_Service_Inst]
-DisplayName    = %Guard.SVCDESC%
-ServiceType    = 1               ; SERVICE_KERNEL_DRIVER
-StartType      = 3               ; SERVICE_DEMAND_START
-ErrorControl   = 1               ; SERVICE_ERROR_NORMAL
-ServiceBinary  = %13%\Guard.sys
-
-[Guard_Device.NT.Wdf]
-KmdfService = Guard, Guard_wdfsect
-
-[Guard_wdfsect]
-KmdfLibraryVersion = $KMDFVERSION$
+[GUARD.Files]
+%DriverName%.sys
 
 [Strings]
-SPSVCINST_ASSOCSERVICE = 0x00000002
-ManufacturerName = "<Your manufacturer name>" ;TODO: Replace with your manufacturer name
-DiskName = "Guard Installation Disk"
-Guard.DeviceDesc = "Guard Device"
-Guard.SVCDESC = "Guard Service"
+ProviderString          = "TODO-Set-Provider"
+ServiceDescription      = "GUARD mini-filter driver"
+ServiceName             = "GUARD"
+DriverName              = "guard"
+DiskId1                 = "GUARD Device Installation Disk"
+
+;Instances specific information.
+DefaultInstance         = "GUARD - Middle Instance"
+Instance1.Name          = "GUARD - Middle Instance"
+Instance1.Altitude      = "370000"
+Instance1.Flags         = 0x1 
