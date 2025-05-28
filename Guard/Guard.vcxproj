@@ -120,6 +120,8 @@
     <ClCompile Include="minifilter.c" />
     <ClCompile Include="pending_operation_list.c" />
     <ClCompile Include="preoperation_callbacks.c" />
+    <ClCompile Include="restrictions.c" />
+    <ClCompile Include="windows_service_controls.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\inc\communication_info.h" />
@@ -129,6 +131,8 @@
     <ClInclude Include="minifilter.h" />
     <ClInclude Include="preoperation_callbacks.h" />
     <ClInclude Include="pending_operation_list.h" />
+    <ClInclude Include="restrictions.h" />
+    <ClInclude Include="windows_service_controls.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
