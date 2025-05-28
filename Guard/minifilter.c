@@ -3,6 +3,7 @@
 #include "communication.h"
 #include "log.h"
 #include "preoperation_callbacks.h"
+#include "pending_operation_list.h"
 
 #include <fltKernel.h>
 
@@ -19,6 +20,8 @@ NTSTATUS DriverEntry(
 	NTSTATUS status = STATUS_SUCCESS;
 
 	try {
+
+		pending_operation_list_initialize();
 
 		status = register_filter(driver_object);
 		if (!NT_SUCCESS(status)) {
