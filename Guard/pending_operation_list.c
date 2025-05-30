@@ -59,6 +59,11 @@ VOID pending_operation_list_clear() {
 	ExAcquireFastMutex(&g_pending_operation_list_lock);
 	PLIST_ENTRY head = RemoveHeadList(&g_pending_operation_list);
 	while (head != &g_pending_operation_list) {
+		PENDING_OPERATION* pending_operation = CONTAINING_RECORD(head, PENDING_OPERATION, list_entry);
+		pending_operation->data->IoStatus.Status = STATUS_ACCESS_DENIED;
+		pending_operation->data->IoStatus.Information = 0;
+		FltCompletePendedPreOperation(pending_operation->data, FLT_PREOP_COMPLETE, NULL);
+
 		ExFreePoolWithTag(head, PENDING_OPERATION_TAG);
 		head = RemoveHeadList(&g_pending_operation_list);
 	}
