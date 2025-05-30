@@ -86,7 +86,7 @@
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
     </DriverSign>
     <Link>
-      <AdditionalDependencies>fltmgr.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>fltmgr.lib;NtosKrnl.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <ClCompile>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
@@ -119,6 +119,7 @@
     <ClCompile Include="global_context.c" />
     <ClCompile Include="minifilter.c" />
     <ClCompile Include="pending_operation_list.c" />
+    <ClCompile Include="policy_engine.c" />
     <ClCompile Include="preoperation_callbacks.c" />
     <ClCompile Include="restrictions.c" />
     <ClCompile Include="windows_service_controls.c" />
@@ -129,6 +130,7 @@
     <ClInclude Include="global_context.h" />
     <ClInclude Include="log.h" />
     <ClInclude Include="minifilter.h" />
+    <ClInclude Include="policy_engine.h" />
     <ClInclude Include="preoperation_callbacks.h" />
     <ClInclude Include="pending_operation_list.h" />
     <ClInclude Include="restrictions.h" />

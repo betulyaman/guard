@@ -36,6 +36,18 @@
     <ClCompile Include="global_context.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="pending_operation_list.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="restrictions.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="windows_service_controls.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="policy_engine.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="minifilter.h">
@@ -51,6 +63,21 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="preoperation_callbacks.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\inc\communication_info.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="pending_operation_list.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="restrictions.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="windows_service_controls.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="policy_engine.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
