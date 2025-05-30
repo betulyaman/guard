@@ -5,8 +5,6 @@
 #include "preoperation_callbacks.h"
 #include "pending_operation_list.h"
 
-#include <fltKernel.h>
-
 NTSTATUS register_filter(_In_ PDRIVER_OBJECT driver_object);
 NTSTATUS filter_unload_callback(FLT_FILTER_UNLOAD_FLAGS flags);
 NTSTATUS filter_tear_down_callback(_In_ PCFLT_RELATED_OBJECTS FltObjects, _In_ FLT_INSTANCE_QUERY_TEARDOWN_FLAGS Flags);

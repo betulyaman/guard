@@ -6,9 +6,6 @@
 #include "restrictions.h"
 #include "windows_service_controls.h"
 
-#include <fltKernel.h>
-#include <ntstrsafe.h>
-
 ULONG g_operation_id;
 
 BOOLEAN is_agent_connected();

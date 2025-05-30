@@ -1,7 +1,7 @@
 #ifndef GUARD_COMMUNICATION_INFO_H
 #define GUARD_COMMUNICATION_INFO_H
 
-#include <fltKernel.h>
+#include <ntifs.h>
 
 #define COMMUNICATION_PORT_NAME L"\\CommunicationPort"
 #define MAX_FILE_NAME_LENGTH 260

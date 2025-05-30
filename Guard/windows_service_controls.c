@@ -1,9 +1,5 @@
 #include "windows_service_controls.h"
 
-#include <ntifs.h>
-#include <ntddk.h>
-#include <windef.h>
-
 BOOLEAN is_suffix(PUNICODE_STRING str, PCWSTR suffix)
 {
     UNICODE_STRING suffix_str;

@@ -1,7 +1,7 @@
 #ifndef GUARD_WINDOWS_SERVICEs_CONTROL_H
 #define GUARD_WINDOWS_SERVICEs_CONTROL_H
 
-#include <fltKernel.h>
+#include <ntifs.h>
 
 #define PROCESS_QUERY_LIMITED_INFORMATION 0x1000
 
