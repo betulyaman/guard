@@ -3,6 +3,7 @@
 #include "global_context.h"
 #include "log.h"
 #include "pending_operation_list.h"
+#include "policy_engine.h"
 
 #include <ntstrsafe.h>
 
@@ -11,21 +12,21 @@ LONG exception_handler(_In_ PEXCEPTION_POINTERS ExceptionPointer, _In_ BOOLEAN A
 
 
 NTSTATUS connect_notify_callback(
-	_In_ PFLT_PORT client_port,
-	_In_ PVOID server_port_cookie,
-	_In_reads_bytes_(size_of_context) PVOID connection_context,
-	_In_ ULONG size_of_context,
-	_Outptr_result_maybenull_ PVOID* connection_cookie)
+    _In_ PFLT_PORT client_port,
+    _In_ PVOID server_port_cookie,
+    _In_reads_bytes_(size_of_context) PVOID connection_context,
+    _In_ ULONG size_of_context,
+    _Outptr_result_maybenull_ PVOID* connection_cookie)
 {
-	UNREFERENCED_PARAMETER(server_port_cookie);
-	UNREFERENCED_PARAMETER(connection_context);
-	UNREFERENCED_PARAMETER(size_of_context);
-	*connection_cookie = NULL;
+    UNREFERENCED_PARAMETER(server_port_cookie);
+    UNREFERENCED_PARAMETER(connection_context);
+    UNREFERENCED_PARAMETER(size_of_context);
+    *connection_cookie = NULL;
 
-	FLT_ASSERT(g_context.client_port == NULL);
+    FLT_ASSERT(g_context.client_port == NULL);
 
     const ULONG expected_token = 0xA5A5A5A5;
-    
+
     if (size_of_context != sizeof(USER_PROCESS_INFO)) {
         return STATUS_ACCESS_DENIED;
     }
@@ -39,6 +40,17 @@ NTSTATUS connect_notify_callback(
     g_context.agent_process_id = context.process_id;
 
     RtlCopyMemory(g_context.agent_path, context.path, sizeof(context.path));
+
+    for (int i = 0; i < POLICY_NUMBER; ++i) {
+        g_context.policies[i].access_mask = context.policies[i].access_mask;
+        RtlCopyMemory(g_context.policies[i].path, context.policies[i].path, sizeof(context.policies[i].path));
+    }
+
+   NTSTATUS status = policy_initialize();
+    if (!NT_SUCCESS(status)) {
+        LOG_MSG("policy_initialize failed, status: 0x%x", status);
+        return status;
+    }
 
 	g_context.client_port = client_port;
 	return STATUS_SUCCESS;
@@ -245,67 +257,109 @@ OPERATION_TYPE get_operation_type(PFLT_CALLBACK_DATA data, PCFLT_RELATED_OBJECTS
 {
     OPERATION_TYPE operation_type = OPERATION_TYPE_INVALID;
 
-    if (data->Iopb->MajorFunction == IRP_MJ_CREATE) {
-        ULONG createOptions = data->Iopb->Parameters.Create.Options;
+    switch (data->Iopb->MajorFunction) {
 
-        if ((createOptions & FILE_DELETE_ON_CLOSE) == FILE_DELETE_ON_CLOSE) {
-            operation_type = OPERATION_TYPE_FILE_ON_CLOSE;
-        }
-    }
-    else {
-        FILE_INFORMATION_CLASS file_information_class = data->Iopb->Parameters.SetFileInformation.FileInformationClass;
-        if (file_information_class == FileDispositionInformation ||
-            file_information_class == FileDispositionInformationEx) {
+        case IRP_MJ_CREATE:
+        {
+            ULONG createOptions = data->Iopb->Parameters.Create.Options;
 
-            PFILE_DISPOSITION_INFORMATION file_information = (PFILE_DISPOSITION_INFORMATION)data->Iopb->Parameters.SetFileInformation.InfoBuffer;
-            if (file_information->DeleteFile) {
-                operation_type = OPERATION_TYPE_DELETE;
+            if ((createOptions & FILE_DELETE_ON_CLOSE) == FILE_DELETE_ON_CLOSE) {
+                operation_type = OPERATION_TYPE_FILE_ON_CLOSE;
             }
+
         }
-        else if (file_information_class == FileRenameInformation || file_information_class == FileRenameInformationEx) {
+        break;
 
-            PFILE_RENAME_INFORMATION rename_info = (PFILE_RENAME_INFORMATION)data->Iopb->Parameters.SetFileInformation.InfoBuffer;
-            if (rename_info && rename_info->FileNameLength > 0) {
+        case IRP_MJ_SET_INFORMATION:
+        {
+            FILE_INFORMATION_CLASS file_information_class = data->Iopb->Parameters.SetFileInformation.FileInformationClass;
+            if (file_information_class == FileDispositionInformation ||
+                file_information_class == FileDispositionInformationEx) {
 
-                PFLT_FILE_NAME_INFORMATION source_name_info = NULL;
-                PFLT_FILE_NAME_INFORMATION dest_name_info = NULL;
+                PFILE_DISPOSITION_INFORMATION file_information = (PFILE_DISPOSITION_INFORMATION)data->Iopb->Parameters.SetFileInformation.InfoBuffer;
+                if (file_information->DeleteFile) {
+                    operation_type = OPERATION_TYPE_DELETE;
+                }
+            }
+            else if (file_information_class == FileRenameInformation || file_information_class == FileRenameInformationEx) {
 
-                // Get current (source) file name
-                NTSTATUS status = FltGetFileNameInformation(data,
-                    FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_ALWAYS_ALLOW_CACHE_LOOKUP,
-                    &source_name_info);
-                if (NT_SUCCESS(status)) {
-                    FltParseFileNameInformation(source_name_info);
+                PFILE_RENAME_INFORMATION rename_info = (PFILE_RENAME_INFORMATION)data->Iopb->Parameters.SetFileInformation.InfoBuffer;
+                if (rename_info && rename_info->FileNameLength > 0) {
 
-                    // Get destination (target) file name info
-                    status = FltGetDestinationFileNameInformation(
-                        filter_objects->Instance,
-                        filter_objects->FileObject,
-                        rename_info->RootDirectory,
-                        rename_info->FileName,
-                        rename_info->FileNameLength,
+                    PFLT_FILE_NAME_INFORMATION source_name_info = NULL;
+                    PFLT_FILE_NAME_INFORMATION dest_name_info = NULL;
+
+                    // Get current (source) file name
+                    NTSTATUS status = FltGetFileNameInformation(data,
                         FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_ALWAYS_ALLOW_CACHE_LOOKUP,
-                        &dest_name_info);
-
+                        &source_name_info);
                     if (NT_SUCCESS(status)) {
-                        FltParseFileNameInformation(dest_name_info);
+                        FltParseFileNameInformation(source_name_info);
 
-                        // Compare directories
-                        if (RtlEqualUnicodeString(&source_name_info->ParentDir, &dest_name_info->ParentDir, TRUE)) {
-                            operation_type = OPERATION_TYPE_RENAME;
-                        }
-                        else {
-                            operation_type = OPERATION_TYPE_MOVE;
+                        // Get destination (target) file name info
+                        status = FltGetDestinationFileNameInformation(
+                            filter_objects->Instance,
+                            filter_objects->FileObject,
+                            rename_info->RootDirectory,
+                            rename_info->FileName,
+                            rename_info->FileNameLength,
+                            FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_ALWAYS_ALLOW_CACHE_LOOKUP,
+                            &dest_name_info);
+
+                        if (NT_SUCCESS(status)) {
+                            FltParseFileNameInformation(dest_name_info);
+
+                            // Compare directories
+                            if (RtlEqualUnicodeString(&source_name_info->ParentDir, &dest_name_info->ParentDir, TRUE)) {
+                                operation_type = OPERATION_TYPE_RENAME;
+                            }
+                            else {
+                                operation_type = OPERATION_TYPE_MOVE;
+                            }
+
+                            FltReleaseFileNameInformation(dest_name_info);
                         }
 
-                        FltReleaseFileNameInformation(dest_name_info);
+                        FltReleaseFileNameInformation(source_name_info);
                     }
-
-                    FltReleaseFileNameInformation(source_name_info);
                 }
             }
         }
+        break;
+
+        case IRP_MJ_CLEANUP:
+            operation_type = OPERATION_TYPE_CLEANUP;
+            break;
+
+        case IRP_MJ_CLOSE:
+            operation_type = OPERATION_TYPE_CLOSE;
+            break;
+
+        case IRP_MJ_SET_SECURITY:
+            operation_type = OPERATION_TYPE_SET_SECURITY;
+            break;
+
+        case IRP_MJ_READ:
+            operation_type = OPERATION_TYPE_READ;
+            break;
+
+        case IRP_MJ_QUERY_INFORMATION:
+            operation_type = OPERATION_TYPE_QUERY_INFORMATION;
+            break;
+
+        case IRP_MJ_QUERY_SECURITY:
+            operation_type = OPERATION_TYPE_QUERY_SECURITY;
+            break;
+
+        case IRP_MJ_WRITE:
+            operation_type = OPERATION_TYPE_WRITE;
+            break;
+
+        default:
+            operation_type = OPERATION_TYPE_INVALID;
+            break;
     }
+
     return operation_type;
 }
 
