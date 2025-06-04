@@ -1,8 +1,11 @@
 #include "policy_engine.h"
 
+#include "global_context.h"
 #include "log.h"
 
-TRIE_NODE* g_trie = NULL;
+#include <ntstrsafe.h>
+
+TRIE_NODE* g_trie_root = NULL;
 
 NTSTATUS trie_new(TRIE_NODE** node) {
 	*node = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(TRIE_NODE), 'TRIE');
@@ -13,7 +16,7 @@ NTSTATUS trie_new(TRIE_NODE** node) {
 	return STATUS_SUCCESS;
 }
 
-NTSTATUS trie_insert(TRIE_NODE* root, CONST UNICODE_STRING* path, UINT8 path_len, UINT8 access_rights) {
+NTSTATUS trie_insert(TRIE_NODE* root, CONST UNICODE_STRING* path, UINT8 path_len, UINT32 access_rights) {
 	if (!root || !path) {
 		return STATUS_INVALID_PARAMETER;
 	}
@@ -130,7 +133,7 @@ VOID trie_free(TRIE_NODE* trie) {
 	}
 }
 
-NTSTATUS trie_update_access(TRIE_NODE* root, CONST UNICODE_STRING* path, UINT8 path_len, UINT8 new_access_rights) {
+NTSTATUS trie_update_access(TRIE_NODE* root, CONST UNICODE_STRING* path, UINT8 path_len, UINT32 new_access_rights) {
 	if (!root || !path) {
 		return STATUS_INVALID_PARAMETER;
 	}
@@ -153,4 +156,26 @@ NTSTATUS trie_update_access(TRIE_NODE* root, CONST UNICODE_STRING* path, UINT8 p
 	}
 
 	return STATUS_UNSUCCESSFUL;
+}
+
+NTSTATUS policy_initialize() {
+	if (!g_context.policies) {
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	NTSTATUS status = trie_new(&g_trie_root);
+	if (!NT_SUCCESS(status)) {
+		return status;
+	}
+
+	UNICODE_STRING path;
+	for (int i = 0; i < POLICY_NUMBER; ++i) {
+		RtlUnicodeStringInit(&path, g_context.policies[i].path);
+		status = trie_insert(g_trie_root, &path, (UINT8)path.Length, g_context.policies[i].access_mask);
+		if (!NT_SUCCESS(status)) {
+			return status;
+		}
+	}
+
+	return STATUS_SUCCESS;
 }

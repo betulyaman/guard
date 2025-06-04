@@ -1,0 +1,8 @@
+#ifndef GUARD_AUTHORIZATION_CONTROL_H
+#define GUARD_AUTHORIZATION_CONTROL_H
+
+#include <fltKernel.h>
+
+BOOLEAN is_authorized(_In_ PFLT_CALLBACK_DATA data);
+
+#endif // GUARD_AUTHORIZATION_CONTROL_H

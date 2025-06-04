@@ -1,9 +1,12 @@
 #include "preoperation_callbacks.h"
 
-#include "global_context.h"
+#include "authorization_control.h"
 #include "communication.h"
+#include "global_context.h"
+#include "log.h"
 #include "pending_operation_list.h"
 #include "restrictions.h"
+#include "policy_engine.h"
 #include "windows_service_controls.h"
 
 ULONG g_operation_id;
@@ -19,22 +22,26 @@ FLT_PREOP_CALLBACK_STATUS pre_operation_callback(
 
 	// Check if Agent connected for debugging !!
 	if (!is_agent_connected()) {
+		LOG_MSG("Agent is not connected");
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
 
 	// Check if the requester is Agent
 	// Do not block Agent
 	if (FltGetRequestorProcessId(data) == (ULONG)g_context.agent_process_id) {
+		LOG_MSG("The requester is Agent");
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
 
 	// Do not block the windows services
 	if (is_trusted_installer_process()) {
+		LOG_MSG("The requester is WINDOWS");
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
 
 	// Block accessing the restricted path
 	if (is_in_restricted_path(data)) {
+		LOG_MSG("It is in a restricted path.");
 		data->IoStatus.Status = STATUS_ACCESS_DENIED;
 		data->IoStatus.Information = 0;
 		return FLT_PREOP_COMPLETE;
@@ -43,6 +50,12 @@ FLT_PREOP_CALLBACK_STATUS pre_operation_callback(
 	OPERATION_TYPE operation_type = get_operation_type(data, filter_objects);
 	if (operation_type == OPERATION_TYPE_INVALID) {
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	}
+
+	if (!is_authorized(data)) {
+		data->IoStatus.Status = STATUS_ACCESS_DENIED;
+		data->IoStatus.Information = 0;
+		return FLT_PREOP_COMPLETE;
 	}
 
 	CONFIRMATION_MESSAGE message;
