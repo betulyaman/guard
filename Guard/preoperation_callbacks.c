@@ -6,7 +6,6 @@
 #include "log.h"
 #include "pending_operation_list.h"
 #include "restrictions.h"
-#include "policy_engine.h"
 #include "windows_service_controls.h"
 
 ULONG g_operation_id;

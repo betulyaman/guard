@@ -45,7 +45,10 @@
     <ClCompile Include="windows_service_controls.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="policy_engine.c">
+    <ClCompile Include="authorization_control.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="adaptive_radix_tree.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -77,7 +80,10 @@
     <ClInclude Include="windows_service_controls.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="policy_engine.h">
+    <ClInclude Include="authorization_control.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="adaptive_radix_tree.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

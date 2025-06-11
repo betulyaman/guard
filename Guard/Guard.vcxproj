@@ -115,24 +115,26 @@
     <FilesToPackage Include="$(TargetPath)" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="authorization_control.c" />
     <ClCompile Include="communication.c" />
     <ClCompile Include="global_context.c" />
     <ClCompile Include="minifilter.c" />
     <ClCompile Include="pending_operation_list.c" />
-    <ClCompile Include="policy_engine.c" />
     <ClCompile Include="preoperation_callbacks.c" />
+    <ClCompile Include="adaptive_radix_tree.c" />
     <ClCompile Include="restrictions.c" />
     <ClCompile Include="windows_service_controls.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\inc\communication_info.h" />
+    <ClInclude Include="authorization_control.h" />
     <ClInclude Include="communication.h" />
     <ClInclude Include="global_context.h" />
     <ClInclude Include="log.h" />
     <ClInclude Include="minifilter.h" />
-    <ClInclude Include="policy_engine.h" />
     <ClInclude Include="preoperation_callbacks.h" />
     <ClInclude Include="pending_operation_list.h" />
+    <ClInclude Include="adaptive_radix_tree.h" />
     <ClInclude Include="restrictions.h" />
     <ClInclude Include="windows_service_controls.h" />
   </ItemGroup>
