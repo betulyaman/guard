@@ -11,6 +11,8 @@
 ULONG g_operation_id;
 
 BOOLEAN is_agent_connected();
+BOOLEAN is_ntfs_metadata_file(PFLT_CALLBACK_DATA data);
+BOOLEAN compare_unicode_strings(PUNICODE_STRING str1, PUNICODE_STRING str2);
 
 FLT_PREOP_CALLBACK_STATUS pre_operation_callback(
 	_Inout_ PFLT_CALLBACK_DATA data,
@@ -18,6 +20,10 @@ FLT_PREOP_CALLBACK_STATUS pre_operation_callback(
 	_Flt_CompletionContext_Outptr_ PVOID* completion_callback
 ) {
 	UNREFERENCED_PARAMETER(completion_callback);
+	
+	if (data->RequestorMode == KernelMode) {
+		return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	}
 
 	// Check if Agent connected for debugging !!
 	if (!is_agent_connected()) {
@@ -25,8 +31,14 @@ FLT_PREOP_CALLBACK_STATUS pre_operation_callback(
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
 
-	// Check if the requester is Agent
-	// Do not block Agent
+	// Do not handle the file operations in internal NTFS system files or directories
+	if (is_ntfs_metadata_file(data)) {
+		LOG_MSG("NTFS system file operaitons");
+		return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	}
+
+	 //Check if the requester is Agent
+	 //Do not block Agent
 	if (FltGetRequestorProcessId(data) == (ULONG)g_context.agent_process_id) {
 		LOG_MSG("The requester is Agent");
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
@@ -85,4 +97,52 @@ FLT_PREOP_CALLBACK_STATUS pre_operation_callback(
 
 BOOLEAN is_agent_connected() {
 	return (g_context.client_port != NULL);
+}
+
+BOOLEAN is_ntfs_metadata_file(PFLT_CALLBACK_DATA data) {
+	static const WCHAR* systemFiles[] = {
+		L"$Mft", L"$MftMirr", L"$LogFile", L"$Volume", L"$AttrDef",
+		L"$", L"$Bitmap", L"$Boot", L"$BadClus", L"$Secure",
+		L"$Upcase", L"$Extend", L"$Quota", L"$ObjId", L"$Reparse"
+	};
+
+	PFLT_FILE_NAME_INFORMATION name_info;
+	NTSTATUS status = FltGetFileNameInformation(data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_ALWAYS_ALLOW_CACHE_LOOKUP, &name_info);
+	if (!NT_SUCCESS(status)) {
+		return FALSE;
+	}
+
+	status = FltParseFileNameInformation(name_info);
+	if (!NT_SUCCESS(status)) {
+		return FALSE;
+	}
+
+	if (!name_info || name_info->Name.Length == 0 || !name_info->Name.Buffer) {
+		FltReleaseFileNameInformation(name_info);
+		return FALSE;
+	}
+
+	for (int i = 0; i < ARRAYSIZE(systemFiles); i++) {
+		UNICODE_STRING target;
+		RtlInitUnicodeString(&target, systemFiles[i]);
+
+		if (compare_unicode_strings(&target, &name_info->FinalComponent)) {
+			return TRUE;
+		}
+	}
+
+	return FALSE;
+}
+
+BOOLEAN compare_unicode_strings(PUNICODE_STRING str1, PUNICODE_STRING str2) {
+	if (!str1 || !str2) {
+		return FALSE;
+	}
+
+	if (str1->Length != str2->Length) {
+		return FALSE;
+	}
+
+	SIZE_T result = RtlCompareMemory(str1->Buffer, str2->Buffer, str1->Length);
+	return ( result == str1->Length);
 }
