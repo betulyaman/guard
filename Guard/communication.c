@@ -66,6 +66,8 @@ VOID disconnect_notify_callback(
 		FltCloseClientPort(g_context.registered_filter, &g_context.client_port);
 		g_context.client_port = NULL;
 	}
+
+    pending_operation_list_clear();
 }
 
 NTSTATUS create_communication_port()
@@ -335,20 +337,8 @@ OPERATION_TYPE get_operation_type(PFLT_CALLBACK_DATA data, PCFLT_RELATED_OBJECTS
             operation_type = OPERATION_TYPE_CLOSE;
             break;
 
-        case IRP_MJ_SET_SECURITY:
-            operation_type = OPERATION_TYPE_SET_SECURITY;
-            break;
-
         case IRP_MJ_READ:
             operation_type = OPERATION_TYPE_READ;
-            break;
-
-        case IRP_MJ_QUERY_INFORMATION:
-            operation_type = OPERATION_TYPE_QUERY_INFORMATION;
-            break;
-
-        case IRP_MJ_QUERY_SECURITY:
-            operation_type = OPERATION_TYPE_QUERY_SECURITY;
             break;
 
         case IRP_MJ_WRITE:
