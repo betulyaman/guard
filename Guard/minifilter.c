@@ -2,8 +2,8 @@
 
 #include "communication.h"
 #include "log.h"
-#include "preoperation_callbacks.h"
 #include "pending_operation_list.h"
+#include "preoperation_callbacks.h"
 
 NTSTATUS register_filter(_In_ PDRIVER_OBJECT driver_object);
 NTSTATUS filter_unload_callback(FLT_FILTER_UNLOAD_FLAGS flags);
@@ -93,14 +93,20 @@ NTSTATUS register_filter(_In_ PDRIVER_OBJECT driver_object)
 {
 	CONST FLT_OPERATION_REGISTRATION callbacks[] = {
 	{ IRP_MJ_CREATE, 0, pre_operation_callback, NULL },
-	{ IRP_MJ_CLEANUP,0, pre_operation_callback, NULL },
-	{ IRP_MJ_CLOSE,  0, pre_operation_callback, NULL },
-	{ IRP_MJ_DIRECTORY_CONTROL, 0, pre_operation_callback, NULL },
+
+	// By the time IRP_MJ_CLEANUP arrives, the file has already been opened and operated on.
+	// Blocking it could cause leaks or unstable system behavior.
+	// { IRP_MJ_CLEANUP,0, pre_operation_callback, NULL },
+
+	// DO NOT BLOCK IRP_MJ_CLOSE. Blocking it will likely cause resource leaks or kernel instability.
+	// No file operation is happening here—it’s cleanup
+	// { IRP_MJ_CLOSE,  0, pre_operation_callback, NULL },
+	
+	// Metadata read
+	// { IRP_MJ_QUERY_INFORMATION,   0, pre_operation_callback, NULL },
+	
 	{ IRP_MJ_SET_INFORMATION,   0, pre_operation_callback, NULL },
-	{ IRP_MJ_SET_SECURITY,      0, pre_operation_callback, NULL },
 	{ IRP_MJ_READ,              0, pre_operation_callback, NULL },
-	{ IRP_MJ_QUERY_INFORMATION, 0, pre_operation_callback, NULL },
-	{ IRP_MJ_QUERY_SECURITY,    0, pre_operation_callback, NULL },
 	{ IRP_MJ_WRITE,             0, pre_operation_callback, NULL },
 	{ IRP_MJ_OPERATION_END }
 	};
