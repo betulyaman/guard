@@ -5,8 +5,10 @@
 
 #include <string.h>
 
+ART_NODE* g_art_node;
+
 BOOLEAN control_path_access_right(PFLT_CALLBACK_DATA data, UINT32 access_right);
-BOOLEAN find_prefixes_in_policies(PUNICODE_STRING path);
+BOOLEAN find_prefixes_in_policies(PUNICODE_STRING path, PUINT32 access_right);
 
 BOOLEAN is_authorized(_In_ PFLT_CALLBACK_DATA data) {
     PFLT_FILE_NAME_INFORMATION name_info;
@@ -21,61 +23,71 @@ BOOLEAN is_authorized(_In_ PFLT_CALLBACK_DATA data) {
         return FALSE;
     }
 
-    BOOLEAN is_exist_in_policies = find_prefixes_in_policies(&name_info->Name);
+    UINT32 access_right;
+    BOOLEAN is_exist_in_policies = find_prefixes_in_policies(&name_info->Name, &access_right);
     FltReleaseFileNameInformation(name_info);
+    
     if (!is_exist_in_policies) {
         return TRUE;
     }
 
-    return control_path_access_right(data, g_art_root->access_rights);
+    return control_path_access_right(data, access_right);
 }
 
 BOOLEAN control_path_access_right(PFLT_CALLBACK_DATA data, UINT32 access_right) {
-    if ((access_right & MASK_READ_ONLY) 
-        && (data->Iopb->MajorFunction == OPERATION_TYPE_READ)) {
-        return TRUE;
-    }
+    switch (data->Iopb->MajorFunction) {
+    case IRP_MJ_READ:
+        return (access_right & POLICY_MASK_READ) != 0;
 
-    if ((access_right & MASK_READ_WRITE) 
-        && ((data->Iopb->MajorFunction == OPERATION_TYPE_READ)
-         || (data->Iopb->MajorFunction == OPERATION_TYPE_WRITE) 
-         || (data->Iopb->MajorFunction == OPERATION_TYPE_CREATE))) {
-        return TRUE;
-    }
+    case IRP_MJ_WRITE:
+        return (access_right & (POLICY_MASK_READ | POLICY_MASK_WRITE)) != 0;
 
-    if (access_right & MASK_FULL_ACCESS) {
-        return TRUE;
-    }
-
-    return FALSE;
-}
-
-BOOLEAN find_prefixes_in_policies(PUNICODE_STRING path) {
-    if (path == NULL || path->Length == 0 || path->Buffer == NULL) {
+    case IRP_MJ_CREATE: {
+        ACCESS_MASK desired_access = data->Iopb->Parameters.Create.SecurityContext->DesiredAccess;
+        if ((desired_access & FILE_READ_DATA) && (access_right & POLICY_MASK_READ)) {
+            return TRUE;
+        }
+        if ((desired_access & FILE_WRITE_DATA) && (access_right & (POLICY_MASK_READ | POLICY_MASK_WRITE))) {
+            return TRUE;
+        }
+        if ((desired_access & FILE_EXECUTE) && (access_right & (POLICY_MASK_READ | POLICY_MASK_WRITE))) {
+            return TRUE;
+        }
         return FALSE;
     }
 
-    UNICODE_STRING prefix;
-    prefix = *path;
+    case IRP_MJ_SET_INFORMATION:
+        return (access_right & (POLICY_MASK_READ | POLICY_MASK_WRITE)) != 0;
+
+    default:
+        return FALSE;
+    }
+}
+
+BOOLEAN find_prefixes_in_policies(PUNICODE_STRING path, PUINT32 out_access_right) {
+    if (!path || path->Length == 0 || !path->Buffer || !out_access_right) {
+        return FALSE;
+    }
+
+    UNICODE_STRING prefix = *path;
+
     while (prefix.Length > 0) {
-        // Search the current prefix in ART
-        BOOLEAN is_found = art_search(g_art_root, &prefix);
-        if (is_found) {
-            return TRUE; // Found a prefix in policies
+        ACCESS_MASK access_right;
+
+        if (art_search(g_art_node, &prefix, &access_right)) {
+            *out_access_right = access_right;
+            return TRUE;
         }
 
-        // Find the position of the last backslash before the current end
         USHORT i;
+        // Trim one level from the end (go up one directory)
         for (i = prefix.Length / sizeof(WCHAR); i > 0; i--) {
             if (prefix.Buffer[i - 1] == L'\\') {
-                // Set the new prefix length (excluding trailing part)
                 prefix.Length = (i - 1) * sizeof(WCHAR);
-                prefix.MaximumLength = prefix.Length;
                 break;
             }
         }
 
-        // If no backslash found, we've reached the topmost prefix
         if (i == 0) {
             break;
         }

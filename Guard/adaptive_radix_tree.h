@@ -58,6 +58,4 @@ BOOLEAN art_search(ART_NODE* root, PCUNICODE_STRING unicode_path, ACCESS_MASK* o
 ART_NODE* art_find_child_prefix(ART_NODE* node, PCUCHAR path_bytes, USHORT path_length, USHORT* path_cursor);
 VOID art_free_node(ART_NODE* node);
 
-NTSTATUS policy_initialize();
-
 #endif // ADAPTIVE_RADIX_TREE_H

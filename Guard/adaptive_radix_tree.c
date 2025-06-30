@@ -6,7 +6,7 @@
 
 ART_NODE* g_art_root = NULL;
 
-static BOOLEAN unicode_to_utf8(PCUNICODE_STRING unicode, PUCHAR buffer, SIZE_T buffer_size, PSIZE_T out_length) {
+BOOLEAN unicode_to_utf8(PCUNICODE_STRING unicode, PUCHAR buffer, SIZE_T buffer_size, PSIZE_T out_length) {
     if (!unicode || !buffer || !out_length) {
         return FALSE;
     }
@@ -44,7 +44,7 @@ ART_NODE* art_create_node(NODE_TYPE type) {
     return node;
 }
 
-static VOID art_upgrade_node(ART_NODE** node_ref, NODE_TYPE new_type) {
+VOID art_upgrade_node(ART_NODE** node_ref, NODE_TYPE new_type) {
     if (!node_ref || !(*node_ref)) {
         return;
     }
@@ -180,7 +180,7 @@ BOOLEAN art_insert_child(ART_NODE** node_ref, UCHAR path_byte, ART_NODE* child) 
     return TRUE;
 }
 
-static USHORT common_prefix_length(PCUCHAR path1, USHORT path1_length, PCUCHAR path2, USHORT path2_length) {
+USHORT common_prefix_length(PCUCHAR path1, USHORT path1_length, PCUCHAR path2, USHORT path2_length) {
     USHORT length = (path1_length < path2_length) ? path1_length : path2_length;
     USHORT i;
     for (i = 0; i < length; i++) {

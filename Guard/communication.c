@@ -329,14 +329,6 @@ OPERATION_TYPE get_operation_type(PFLT_CALLBACK_DATA data, PCFLT_RELATED_OBJECTS
         }
         break;
 
-        case IRP_MJ_CLEANUP:
-            operation_type = OPERATION_TYPE_CLEANUP;
-            break;
-
-        case IRP_MJ_CLOSE:
-            operation_type = OPERATION_TYPE_CLOSE;
-            break;
-
         case IRP_MJ_READ:
             operation_type = OPERATION_TYPE_READ;
             break;
