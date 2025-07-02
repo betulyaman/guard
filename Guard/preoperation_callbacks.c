@@ -63,14 +63,19 @@ FLT_PREOP_CALLBACK_STATUS pre_operation_callback(
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
 
-	if (!is_authorized(data)) {
-		data->IoStatus.Status = STATUS_ACCESS_DENIED;
-		data->IoStatus.Information = 0;
-		return FLT_PREOP_COMPLETE;
-	}
+	//if (!is_authorized(data)) {
+	//	data->IoStatus.Status = STATUS_ACCESS_DENIED;
+	//	data->IoStatus.Information = 0;
+	//	return FLT_PREOP_COMPLETE;
+	//}
 
-	CONFIRMATION_MESSAGE message;
-	NTSTATUS status = create_confirmation_message(data, g_operation_id, operation_type, &message, filter_objects);
+	//// Allow rename operations that are part of allowed write flows, while still denying malicious or unrelated renames.
+	//if (operation_type == OPERATION_TYPE_RENAME) {
+	//	return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	//}
+
+	MINIFILTER_REQUEST message;
+	NTSTATUS status = create_minifilter_request(data, g_operation_id, operation_type, &message, filter_objects);
 	if (!NT_SUCCESS(status)) {
 		data->IoStatus.Status = STATUS_UNSUCCESSFUL;
 		return FLT_PREOP_COMPLETE;
@@ -103,7 +108,7 @@ BOOLEAN is_ntfs_metadata_file(PFLT_CALLBACK_DATA data) {
 	static const WCHAR* systemFiles[] = {
 		L"$Mft", L"$MftMirr", L"$LogFile", L"$Volume", L"$AttrDef",
 		L"$", L"$Bitmap", L"$Boot", L"$BadClus", L"$Secure",
-		L"$Upcase", L"$Extend", L"$Quota", L"$ObjId", L"$Reparse"
+		L"$Upcase", L"$Extend", L"$Quota", L"$ObjId", L"$Reparse", L"$RECYCLE.BIN"
 	};
 
 	PFLT_FILE_NAME_INFORMATION name_info;

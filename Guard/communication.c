@@ -27,11 +27,11 @@ NTSTATUS connect_notify_callback(
 
     const ULONG expected_token = 0xA5A5A5A5;
 
-    if (size_of_context != sizeof(USER_PROCESS_INFO)) {
+    if (size_of_context != sizeof(HANDSHAKE_INFO)) {
         return STATUS_ACCESS_DENIED;
     }
 
-    USER_PROCESS_INFO context;
+    HANDSHAKE_INFO context;
     RtlCopyMemory(&context, connection_context, size_of_context);
     if (context.token != expected_token) {
         return STATUS_ACCESS_DENIED;
@@ -41,16 +41,16 @@ NTSTATUS connect_notify_callback(
 
     RtlCopyMemory(g_context.agent_path, context.path, sizeof(context.path));
 
-    for (int i = 0; i < POLICY_NUMBER; ++i) {
-        g_context.policies[i].access_mask = context.policies[i].access_mask;
-        RtlCopyMemory(g_context.policies[i].path, context.policies[i].path, sizeof(context.policies[i].path));
-    }
+    //for (int i = 0; i < POLICY_NUMBER; ++i) {
+    //    g_context.policies[i].access_mask = context.policies[i].access_mask;
+    //    RtlCopyMemory(g_context.policies[i].path, context.policies[i].path, sizeof(context.policies[i].path));
+    //}
 
-   NTSTATUS status = policy_initialize();
-    if (!NT_SUCCESS(status)) {
-        LOG_MSG("policy_initialize failed, status: 0x%x", status);
-        return status;
-    }
+   //NTSTATUS status = policy_initialize();
+   // if (!NT_SUCCESS(status)) {
+   //     LOG_MSG("policy_initialize failed, status: 0x%x", status);
+   //     return status;
+   // }
 
 	g_context.client_port = client_port;
 	return STATUS_SUCCESS;
@@ -66,8 +66,6 @@ VOID disconnect_notify_callback(
 		FltCloseClientPort(g_context.registered_filter, &g_context.client_port);
 		g_context.client_port = NULL;
 	}
-
-    pending_operation_list_clear();
 }
 
 NTSTATUS create_communication_port()
@@ -95,7 +93,7 @@ NTSTATUS create_communication_port()
 		NULL,
 		connect_notify_callback,
 		disconnect_notify_callback,
-        user_reply_notify_callback,
+        user_response_notify_callback,
 		1);
 
 	FltFreeSecurityDescriptor(security_descriptor);
@@ -108,7 +106,7 @@ NTSTATUS create_communication_port()
 }
 
 // called whenever a user mode application wishes to communicate with the minifilter.
-NTSTATUS user_reply_notify_callback(
+NTSTATUS user_response_notify_callback(
     _In_ PVOID port_cookie,
     _In_reads_bytes_opt_(input_buffer_length) PVOID input_buffer,
     _In_ ULONG input_buffer_length,
@@ -122,15 +120,15 @@ NTSTATUS user_reply_notify_callback(
     *return_output_buffer_length = 0;
 
     if ((input_buffer == NULL) ||
-        (input_buffer_length < (FIELD_OFFSET(USER_REPLY, operation_id) +
-            sizeof(USER_REPLY)))) {
+        (input_buffer_length < (FIELD_OFFSET(USER_RESPONSE, operation_id) +
+            sizeof(USER_RESPONSE)))) {
         return STATUS_INVALID_PARAMETER;
     }
 
-    USER_REPLY reply;
+    USER_RESPONSE reply;
     try {
-        reply.operation_id = ((USER_REPLY*)input_buffer)->operation_id;
-        reply.allow = ((USER_REPLY*)input_buffer)->allow;
+        reply.operation_id = ((USER_RESPONSE*)input_buffer)->operation_id;
+        reply.allow = ((USER_RESPONSE*)input_buffer)->allow;
     } except(exception_handler(GetExceptionInformation(), TRUE)) {
 
         return GetExceptionCode();
@@ -158,7 +156,7 @@ NTSTATUS user_reply_notify_callback(
     return STATUS_SUCCESS;
 }
 
-NTSTATUS create_confirmation_message(_In_ PFLT_CALLBACK_DATA data, _In_ ULONG operation_id, _In_ OPERATION_TYPE operation_type, _Out_ CONFIRMATION_MESSAGE* message, PCFLT_RELATED_OBJECTS filter_objects) {
+NTSTATUS create_minifilter_request(_In_ PFLT_CALLBACK_DATA data, _In_ ULONG operation_id, _In_ OPERATION_TYPE operation_type, _Out_ MINIFILTER_REQUEST* message, PCFLT_RELATED_OBJECTS filter_objects) {
 
     if (message == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -211,6 +209,7 @@ NTSTATUS create_confirmation_message(_In_ PFLT_CALLBACK_DATA data, _In_ ULONG op
         if (!NT_SUCCESS(status)) {
             return status;
         }
+        message->target_name[259] = '\0';
     }
 
     WCHAR buffer[MAX_FILE_NAME_LENGTH];
@@ -224,11 +223,12 @@ NTSTATUS create_confirmation_message(_In_ PFLT_CALLBACK_DATA data, _In_ ULONG op
     if (!NT_SUCCESS(status)) {
         return status;
     }
+    message->file_name[259] = '\0';
 
     return STATUS_SUCCESS;
 }
 
-NTSTATUS send_message_to_user(_In_ CONFIRMATION_MESSAGE* message)
+NTSTATUS send_message_to_user(_In_ MINIFILTER_REQUEST* message)
 {
     if (g_context.client_port == NULL) {
         return STATUS_UNSUCCESSFUL;
@@ -242,7 +242,7 @@ NTSTATUS send_message_to_user(_In_ CONFIRMATION_MESSAGE* message)
         g_context.registered_filter,
         &g_context.client_port,
         message,
-        sizeof(CONFIRMATION_MESSAGE),
+        sizeof(MINIFILTER_REQUEST),
         NULL,
         NULL,
         NULL
@@ -329,13 +329,13 @@ OPERATION_TYPE get_operation_type(PFLT_CALLBACK_DATA data, PCFLT_RELATED_OBJECTS
         }
         break;
 
-        case IRP_MJ_READ:
-            operation_type = OPERATION_TYPE_READ;
-            break;
+        //case IRP_MJ_READ:
+        //    operation_type = OPERATION_TYPE_READ;
+        //    break;
 
-        case IRP_MJ_WRITE:
-            operation_type = OPERATION_TYPE_WRITE;
-            break;
+        //case IRP_MJ_WRITE:
+        //    operation_type = OPERATION_TYPE_WRITE;
+        //    break;
 
         default:
             operation_type = OPERATION_TYPE_INVALID;

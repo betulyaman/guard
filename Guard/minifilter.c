@@ -106,8 +106,8 @@ NTSTATUS register_filter(_In_ PDRIVER_OBJECT driver_object)
 	// { IRP_MJ_QUERY_INFORMATION,   0, pre_operation_callback, NULL },
 	
 	{ IRP_MJ_SET_INFORMATION,   0, pre_operation_callback, NULL },
-	{ IRP_MJ_READ,              0, pre_operation_callback, NULL },
-	{ IRP_MJ_WRITE,             0, pre_operation_callback, NULL },
+	//{ IRP_MJ_READ,              0, pre_operation_callback, NULL },
+	//{ IRP_MJ_WRITE,             0, pre_operation_callback, NULL },
 	{ IRP_MJ_OPERATION_END }
 	};
 

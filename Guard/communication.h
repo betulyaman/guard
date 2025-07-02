@@ -14,7 +14,7 @@ NTSTATUS connect_notify_callback(
 
 VOID disconnect_notify_callback(_In_opt_ PVOID connection_cookie);
 
-NTSTATUS user_reply_notify_callback(
+NTSTATUS user_response_notify_callback(
     _In_ PVOID port_cookie,
     _In_reads_bytes_opt_(input_buffer_length) PVOID input_buffer,
     _In_ ULONG input_buffer_length,
@@ -25,8 +25,8 @@ NTSTATUS user_reply_notify_callback(
 
 NTSTATUS create_communication_port();
 
-NTSTATUS send_message_to_user(_In_ CONFIRMATION_MESSAGE* message);
-NTSTATUS create_confirmation_message(_In_ PFLT_CALLBACK_DATA data, _In_ ULONG operation_id, _In_ OPERATION_TYPE operation_type, _Out_ CONFIRMATION_MESSAGE* message, PCFLT_RELATED_OBJECTS filter_objects);
+NTSTATUS send_message_to_user(_In_ MINIFILTER_REQUEST* message);
+NTSTATUS create_minifilter_request(_In_ PFLT_CALLBACK_DATA data, _In_ ULONG operation_id, _In_ OPERATION_TYPE operation_type, _Out_ MINIFILTER_REQUEST* message, PCFLT_RELATED_OBJECTS filter_objects);
 OPERATION_TYPE get_operation_type(PFLT_CALLBACK_DATA data, PCFLT_RELATED_OBJECTS filter_objects);
 
 #endif //GURAD_COMMUNICATION_H

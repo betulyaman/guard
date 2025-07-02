@@ -120,6 +120,7 @@
     <ClCompile Include="global_context.c" />
     <ClCompile Include="minifilter.c" />
     <ClCompile Include="pending_operation_list.c" />
+    <ClCompile Include="policy_manager.c" />
     <ClCompile Include="preoperation_callbacks.c" />
     <ClCompile Include="adaptive_radix_tree.c" />
     <ClCompile Include="restrictions.c" />
@@ -132,6 +133,7 @@
     <ClInclude Include="global_context.h" />
     <ClInclude Include="log.h" />
     <ClInclude Include="minifilter.h" />
+    <ClInclude Include="policy_manager.h" />
     <ClInclude Include="preoperation_callbacks.h" />
     <ClInclude Include="pending_operation_list.h" />
     <ClInclude Include="adaptive_radix_tree.h" />
