@@ -26,19 +26,20 @@ typedef struct {
 typedef struct {
 	ULONG operation_id;
 	UINT16 operation_type;
-	WCHAR target_name[260];
-	WCHAR file_name[260];
+	WCHAR target_name[MAX_FILE_NAME_LENGTH];
+	WCHAR file_name[MAX_FILE_NAME_LENGTH];
 } MINIFILTER_REQUEST;
 
 typedef struct {
 	ULONG access_mask;
-	WCHAR path[260];
+	WCHAR path[MAX_FILE_NAME_LENGTH];
 } POLICY;
 
 typedef struct {
 	ULONG token;
 	LONG process_id;
-	WCHAR restricted_path[260];
+	WCHAR installation_path[MAX_FILE_NAME_LENGTH];
+	WCHAR local_db_path[MAX_FILE_NAME_LENGTH];
 	//POLICY policies[POLICY_NUMBER];
 } HANDSHAKE_INFO;
 

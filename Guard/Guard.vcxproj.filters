@@ -39,9 +39,6 @@
     <ClCompile Include="pending_operation_list.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="restrictions.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="windows_service_controls.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -75,9 +72,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="pending_operation_list.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="restrictions.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="windows_service_controls.h">

@@ -39,7 +39,8 @@ NTSTATUS connect_notify_callback(
 
     g_context.agent_process_id = context.process_id;
 
-    RtlCopyMemory(g_context.agent_path, context.path, sizeof(context.path));
+    RtlCopyMemory(g_context.agent_installation_path, context.installation_path, sizeof(context.installation_path));
+    RtlCopyMemory(g_context.local_db_path, context.local_db_path, sizeof(context.local_db_path));
 
     //for (int i = 0; i < POLICY_NUMBER; ++i) {
     //    g_context.policies[i].access_mask = context.policies[i].access_mask;

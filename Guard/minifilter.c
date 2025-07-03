@@ -18,6 +18,7 @@ NTSTATUS DriverEntry(
 	NTSTATUS status = STATUS_SUCCESS;
 
 	try {
+		initalize_global_context();
 
 		pending_operation_list_initialize();
 
