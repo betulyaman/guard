@@ -14,7 +14,7 @@ NTSTATUS connect_notify_callback(
 
 VOID disconnect_notify_callback(_In_opt_ PVOID connection_cookie);
 
-NTSTATUS user_response_notify_callback(
+NTSTATUS message_notify_callback(
     _In_ PVOID port_cookie,
     _In_reads_bytes_opt_(input_buffer_length) PVOID input_buffer,
     _In_ ULONG input_buffer_length,

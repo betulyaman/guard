@@ -4,12 +4,12 @@
 #include "global_context.h"
 #include "log.h"
 #include "pending_operation_list.h"
+#include "security.h"
 
 #include <ntstrsafe.h>
 
 NTSTATUS get_file_name(_Inout_ PFLT_CALLBACK_DATA data, _Out_ PUNICODE_STRING file_name);
 LONG exception_handler(_In_ PEXCEPTION_POINTERS ExceptionPointer, _In_ BOOLEAN AccessingUserBuffer);
-
 
 NTSTATUS connect_notify_callback(
     _In_ PFLT_PORT client_port,
@@ -25,33 +25,7 @@ NTSTATUS connect_notify_callback(
 
     FLT_ASSERT(g_context.client_port == NULL);
 
-    const ULONG expected_token = 0xA5A5A5A5;
-
-    if (size_of_context != sizeof(HANDSHAKE_INFO)) {
-        return STATUS_ACCESS_DENIED;
-    }
-
-    HANDSHAKE_INFO context;
-    RtlCopyMemory(&context, connection_context, size_of_context);
-    if (context.token != expected_token) {
-        return STATUS_ACCESS_DENIED;
-    }
-
-    g_context.agent_process_id = context.process_id;
-
-    RtlCopyMemory(g_context.agent_installation_path, context.installation_path, sizeof(context.installation_path));
-    RtlCopyMemory(g_context.local_db_path, context.local_db_path, sizeof(context.local_db_path));
-
-    //for (int i = 0; i < POLICY_NUMBER; ++i) {
-    //    g_context.policies[i].access_mask = context.policies[i].access_mask;
-    //    RtlCopyMemory(g_context.policies[i].path, context.policies[i].path, sizeof(context.policies[i].path));
-    //}
-
-   //NTSTATUS status = policy_initialize();
-   // if (!NT_SUCCESS(status)) {
-   //     LOG_MSG("policy_initialize failed, status: 0x%x", status);
-   //     return status;
-   // }
+    g_context.connection_state = CONNECTION_UNAUTHENTICATED;
 
 	g_context.client_port = client_port;
 	return STATUS_SUCCESS;
@@ -94,7 +68,7 @@ NTSTATUS create_communication_port()
 		NULL,
 		connect_notify_callback,
 		disconnect_notify_callback,
-        user_response_notify_callback,
+        message_notify_callback,
 		1);
 
 	FltFreeSecurityDescriptor(security_descriptor);
@@ -107,7 +81,7 @@ NTSTATUS create_communication_port()
 }
 
 // called whenever a user mode application wishes to communicate with the minifilter.
-NTSTATUS user_response_notify_callback(
+NTSTATUS message_notify_callback(
     _In_ PVOID port_cookie,
     _In_reads_bytes_opt_(input_buffer_length) PVOID input_buffer,
     _In_ ULONG input_buffer_length,
@@ -116,45 +90,108 @@ NTSTATUS user_response_notify_callback(
     _Out_ PULONG return_output_buffer_length
 ) {
     UNREFERENCED_PARAMETER(port_cookie);
-    UNREFERENCED_PARAMETER(output_buffer);
-    UNREFERENCED_PARAMETER(output_buffer_length);
-    *return_output_buffer_length = 0;
 
-    if ((input_buffer == NULL) ||
-        (input_buffer_length < (FIELD_OFFSET(USER_RESPONSE, operation_id) +
-            sizeof(USER_RESPONSE)))) {
-        return STATUS_INVALID_PARAMETER;
+    switch (g_context.connection_state) {
+        case CONNECTION_UNAUTHENTICATED:
+        {
+            if (!output_buffer || !output_buffer_length) {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            NTSTATUS status = generate_secure_nonce(g_context.nonce, NONCE_SIZE);
+            if (!NT_SUCCESS(status)) {
+                return STATUS_UNSUCCESSFUL;
+            }
+            
+            try {
+                RtlCopyMemory(output_buffer, g_context.nonce, NONCE_SIZE);
+                *return_output_buffer_length = NONCE_SIZE;
+            } except(exception_handler(GetExceptionInformation(), TRUE)) {
+                return GetExceptionCode();
+            }
+
+            g_context.connection_state = CONNECTION_AUTHENTICATING;
+
+
+            DbgPrint("Connection authenticating.\n");
+            return STATUS_SUCCESS;
+        }
+        break;
+
+        case CONNECTION_AUTHENTICATING:
+        {
+            if (!input_buffer || input_buffer_length < sizeof(USER_HMAC_SIGNATURE)) {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            USER_HMAC_SIGNATURE user_hmac_signature;
+            try {
+                RtlCopyMemory(user_hmac_signature.hmac, ((USER_HMAC_SIGNATURE*)input_buffer)->hmac, HMAC_SIZE);
+            } except(exception_handler(GetExceptionInformation(), TRUE)) {
+                return GetExceptionCode();
+            }
+
+            NTSTATUS status = verify_HMAC_SHA256_signature(g_context.nonce, user_hmac_signature.hmac);
+            if (NT_SUCCESS(status)) {
+                g_context.connection_state = CONNECTION_AUTHENTICATED;
+                DbgPrint("Connection authenticated.\n");
+                return STATUS_SUCCESS;
+            }
+            else {
+                DbgPrint("Authentication failed, closing client port.\n");
+                if (g_context.client_port != NULL) {
+                    FltCloseClientPort(g_context.registered_filter, &g_context.client_port);
+                }
+                return STATUS_ACCESS_DENIED;
+            }
+
+        }
+        break;
+
+        case CONNECTION_AUTHENTICATED:
+        {
+            DbgPrint("Connection established.\n");
+            if ((input_buffer == NULL) ||
+                (input_buffer_length < (FIELD_OFFSET(USER_RESPONSE, operation_id) +
+                    sizeof(USER_RESPONSE)))) {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            USER_RESPONSE reply;
+            try {
+                reply.operation_id = ((USER_RESPONSE*)input_buffer)->operation_id;
+                reply.allow = ((USER_RESPONSE*)input_buffer)->allow;
+            } except(exception_handler(GetExceptionInformation(), TRUE)) {
+
+                return GetExceptionCode();
+            }
+
+            PENDING_OPERATION* replied_operation = pending_operation_list_remove_by_id(reply.operation_id);
+            if (replied_operation == NULL) {
+                // TODO replied operation doesnt exist in the pending list
+                return STATUS_UNSUCCESSFUL;
+            }
+
+            if (reply.allow == TRUE) {
+                replied_operation->data->IoStatus.Status = STATUS_SUCCESS;
+                FltCompletePendedPreOperation(replied_operation->data, FLT_PREOP_SUCCESS_NO_CALLBACK, NULL);
+            }
+            else {
+                replied_operation->data->IoStatus.Status = STATUS_ACCESS_DENIED;
+                replied_operation->data->IoStatus.Information = 0;
+                FltCompletePendedPreOperation(replied_operation->data, FLT_PREOP_COMPLETE, NULL);
+
+            }
+
+            ExFreePoolWithTag(replied_operation, PENDING_OPERATION_TAG);
+
+            return STATUS_SUCCESS;
+        }
+        break;
+
+        default: 
+            return STATUS_ACCESS_DENIED;
     }
-
-    USER_RESPONSE reply;
-    try {
-        reply.operation_id = ((USER_RESPONSE*)input_buffer)->operation_id;
-        reply.allow = ((USER_RESPONSE*)input_buffer)->allow;
-    } except(exception_handler(GetExceptionInformation(), TRUE)) {
-
-        return GetExceptionCode();
-    }
-
-    PENDING_OPERATION* replied_operation = pending_operation_list_remove_by_id(reply.operation_id);
-    if (replied_operation == NULL) {
-        // TODO replied operation doesnt exist in the pending list
-        return STATUS_UNSUCCESSFUL;
-    }
-
-    if (reply.allow == TRUE) {
-        replied_operation->data->IoStatus.Status = STATUS_SUCCESS;
-        FltCompletePendedPreOperation(replied_operation->data, FLT_PREOP_SUCCESS_NO_CALLBACK, NULL);
-    }
-    else {
-        replied_operation->data->IoStatus.Status = STATUS_ACCESS_DENIED;
-        replied_operation->data->IoStatus.Information = 0;
-        FltCompletePendedPreOperation(replied_operation->data, FLT_PREOP_COMPLETE, NULL);
-
-    }
-
-    ExFreePoolWithTag(replied_operation, PENDING_OPERATION_TAG);
-
-    return STATUS_SUCCESS;
 }
 
 NTSTATUS create_minifilter_request(_In_ PFLT_CALLBACK_DATA data, _In_ ULONG operation_id, _In_ OPERATION_TYPE operation_type, _Out_ MINIFILTER_REQUEST* message, PCFLT_RELATED_OBJECTS filter_objects) {
@@ -373,7 +410,6 @@ NTSTATUS get_file_name(_Inout_ PFLT_CALLBACK_DATA data, _Out_ PUNICODE_STRING fi
 
     return status;
 }
-
 
 LONG exception_handler(
     _In_ PEXCEPTION_POINTERS ExceptionPointer,

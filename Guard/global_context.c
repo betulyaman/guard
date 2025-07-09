@@ -5,6 +5,8 @@
 GLOBAL_CONTEXT g_context;
 
 VOID initalize_global_context() {
+    g_context.connection_state = CONNECTION_CLOSED;
+
     // When the minifilter connects to Agent, agent_installation_path and
     // local_db_path values are updated with the paths sent by Agent.
     WCHAR default_installation_path[MAX_FILE_NAME_LENGTH] = L"\\Device\\HarddiskVolume3\\Program Files\\iCredible\\File-Security";

@@ -31,13 +31,13 @@ NTSTATUS DriverEntry(
 		status = create_communication_port();
 		if (!NT_SUCCESS(status)) {
 			LOG_MSG("create_communication_port failed, status: 0x%x", status);
-			leave;
+			return status;
 		}
 
 		status = FltStartFiltering(g_context.registered_filter);
 		if (!NT_SUCCESS(status)) {
 			LOG_MSG("FltStartFiltering failed, status: 0x%x", status);
-			leave;
+			return status;
 		}
 	}
 	finally {
