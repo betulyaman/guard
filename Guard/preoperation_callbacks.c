@@ -65,7 +65,7 @@ FLT_PREOP_CALLBACK_STATUS pre_operation_callback(
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
 
-	if (is_local_database_file(data) && (operation_type == OPERATION_TYPE_DELETE || operation_type == OPERATION_TYPE_FILE_ON_CLOSE)) {
+	if (is_local_database_file(data)) {
 		LOG_MSG("Local database can't be deleted.");
 		data->IoStatus.Status = STATUS_ACCESS_DENIED;
 		data->IoStatus.Information = 0;

@@ -141,6 +141,7 @@ NTSTATUS message_notify_callback(
                 DbgPrint("Authentication failed, closing client port.\n");
                 if (g_context.client_port != NULL) {
                     FltCloseClientPort(g_context.registered_filter, &g_context.client_port);
+                    g_context.client_port = NULL;
                 }
                 return STATUS_ACCESS_DENIED;
             }
@@ -150,40 +151,64 @@ NTSTATUS message_notify_callback(
 
         case CONNECTION_AUTHENTICATED:
         {
-            DbgPrint("Connection established.\n");
-            if ((input_buffer == NULL) ||
-                (input_buffer_length < (FIELD_OFFSET(USER_RESPONSE, operation_id) +
-                    sizeof(USER_RESPONSE)))) {
-                return STATUS_INVALID_PARAMETER;
-            }
-
-            USER_RESPONSE reply;
+            // initialization:
+            USER_INITIAL_CONTEXT user_initial_context;
             try {
-                reply.operation_id = ((USER_RESPONSE*)input_buffer)->operation_id;
-                reply.allow = ((USER_RESPONSE*)input_buffer)->allow;
+                RtlCopyMemory(&user_initial_context, ((USER_INITIAL_CONTEXT*)input_buffer), sizeof(USER_INITIAL_CONTEXT));
             } except(exception_handler(GetExceptionInformation(), TRUE)) {
-
                 return GetExceptionCode();
             }
 
-            PENDING_OPERATION* replied_operation = pending_operation_list_remove_by_id(reply.operation_id);
-            if (replied_operation == NULL) {
-                // TODO replied operation doesnt exist in the pending list
-                return STATUS_UNSUCCESSFUL;
-            }
+            g_context.agent_process_id = user_initial_context.process_id;
 
-            if (reply.allow == TRUE) {
-                replied_operation->data->IoStatus.Status = STATUS_SUCCESS;
-                FltCompletePendedPreOperation(replied_operation->data, FLT_PREOP_SUCCESS_NO_CALLBACK, NULL);
-            }
-            else {
-                replied_operation->data->IoStatus.Status = STATUS_ACCESS_DENIED;
-                replied_operation->data->IoStatus.Information = 0;
-                FltCompletePendedPreOperation(replied_operation->data, FLT_PREOP_COMPLETE, NULL);
+            RtlCopyMemory(g_context.agent_installation_path, user_initial_context.installation_path, sizeof(user_initial_context.installation_path));
+            RtlCopyMemory(g_context.local_db_path, user_initial_context.local_db_path, sizeof(user_initial_context.local_db_path));
 
-            }
+            //for (int i = 0; i < POLICY_NUMBER; ++i) {
+            //    g_context.policies[i].access_mask = user_initial_context.policies[i].access_mask;
+            //    RtlCopyMemory(g_context.policies[i].path, user_initial_context.policies[i].path, sizeof(context.policies[i].path));
+            //}
 
-            ExFreePoolWithTag(replied_operation, PENDING_OPERATION_TAG);
+           //NTSTATUS status = policy_initialize();
+           // if (!NT_SUCCESS(status)) {
+           //     LOG_MSG("policy_initialize failed, status: 0x%x", status);
+           //     return status;
+           // }
+
+            //DbgPrint("Connection established.\n");
+            //if ((input_buffer == NULL) ||
+            //    (input_buffer_length < (FIELD_OFFSET(USER_RESPONSE, operation_id) +
+            //        sizeof(USER_RESPONSE)))) {
+            //    return STATUS_INVALID_PARAMETER;
+            //}
+
+            //USER_RESPONSE reply;
+            //try {
+            //    reply.operation_id = ((USER_RESPONSE*)input_buffer)->operation_id;
+            //    reply.allow = ((USER_RESPONSE*)input_buffer)->allow;
+            //} except(exception_handler(GetExceptionInformation(), TRUE)) {
+
+            //    return GetExceptionCode();
+            //}
+
+            //PENDING_OPERATION* replied_operation = pending_operation_list_remove_by_id(reply.operation_id);
+            //if (replied_operation == NULL) {
+            //    // TODO replied operation doesnt exist in the pending list
+            //    return STATUS_UNSUCCESSFUL;
+            //}
+
+            //if (reply.allow == TRUE) {
+            //    replied_operation->data->IoStatus.Status = STATUS_SUCCESS;
+            //    FltCompletePendedPreOperation(replied_operation->data, FLT_PREOP_SUCCESS_NO_CALLBACK, NULL);
+            //}
+            //else {
+            //    replied_operation->data->IoStatus.Status = STATUS_ACCESS_DENIED;
+            //    replied_operation->data->IoStatus.Information = 0;
+            //    FltCompletePendedPreOperation(replied_operation->data, FLT_PREOP_COMPLETE, NULL);
+
+            //}
+
+            //ExFreePoolWithTag(replied_operation, PENDING_OPERATION_TAG);
 
             return STATUS_SUCCESS;
         }

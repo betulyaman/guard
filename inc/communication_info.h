@@ -36,11 +36,10 @@ typedef struct {
 } POLICY;
 
 typedef struct {
-	ULONG token;
 	LONG process_id;
 	WCHAR installation_path[MAX_FILE_NAME_LENGTH];
 	WCHAR local_db_path[MAX_FILE_NAME_LENGTH];
 	//POLICY policies[POLICY_NUMBER];
-} HANDSHAKE_INFO;
+} USER_INITIAL_CONTEXT;
 
 #endif //GUARD_COMMUNICATION_INFO_H
