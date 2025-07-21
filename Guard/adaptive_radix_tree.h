@@ -6,11 +6,18 @@
 #define MAX_PREFIX_LENGTH 23 // \\device\\harddiskvolumeX\\
 
 // Policy mask definitions for access control integration
-#define POLICY_MASK_READ    FILE_GENERIC_READ
-#define POLICY_MASK_WRITE   FILE_GENERIC_WRITE
-#define POLICY_MASK_EXECUTE FILE_GENERIC_EXECUTE
-#define POLICY_MASK_ALL_ACCESS     FILE_ALL_ACCESS
+#define POLICY_INVALID_ACCESS       0
+#define POLICY_MASK_READ            FILE_GENERIC_READ
+#define POLICY_MASK_WRITE           FILE_GENERIC_WRITE
+#define POLICY_MASK_EXECUTE         FILE_GENERIC_EXECUTE
+#define POLICY_MASK_ALL_ACCESS      FILE_ALL_ACCESS
 #define POLICY_MASK_ALL_BUT_DELETE  (FILE_ALL_ACCESS & ~DELETE)
+
+//#define POLICY_MASK_READ            0x00120089
+//#define POLICY_MASK_WRITE           0x00120116
+//#define POLICY_MASK_EXECUTE         0x001200A0
+//#define POLICY_MASK_ALL_ACCESS      0x001F01FF
+//#define POLICY_MASK_ALL_BUT_DELETE  0x001E01FF
 
 typedef enum {
     NODE4 = 1,
@@ -24,7 +31,7 @@ typedef INT(*art_callback)(
     VOID* data,       // User-defined callback data
     CONST PUCHAR key, // Key of the current leaf
     UINT32 key_len,   // Length of the key
-    VOID* value       // Stored value in the leaf
+    ULONG value       // Stored value in the leaf
     );
 
 typedef struct _ART_NODE {
@@ -60,7 +67,7 @@ typedef struct _ART_NODE256 {
 #pragma warning(push)
 #pragma warning(disable : 4200) // Allow zero-sized array for flexible array member
 typedef struct _ART_LEAF {
-    VOID* value;
+    ULONG value;
     USHORT key_length;
     UCHAR key[]; // arbitrary size, as they include the key
 } ART_LEAF;
@@ -86,7 +93,7 @@ int art_destroy_tree(ART_TREE* tree);
  * - NULL if the item was newly inserted, 
  * - otherwise the old value pointer is returned.
  */
-VOID* art_insert(ART_TREE* tree, PCUNICODE_STRING key, VOID* value);
+ULONG art_insert(ART_TREE* tree, PCUNICODE_STRING key, ULONG value);
 
 /**
  * Inserts a new value into the art tree (not replacing)
@@ -94,23 +101,23 @@ VOID* art_insert(ART_TREE* tree, PCUNICODE_STRING key, VOID* value);
  * - NULL if the item was newly inserted, 
  * - otherwise the old value pointer is returned.
  */
-VOID* art_insert_no_replace(ART_TREE* tree, PCUNICODE_STRING key, VOID* value);
+ULONG art_insert_no_replace(ART_TREE* tree, PCUNICODE_STRING unicode_key, ULONG value);
 
 /**
  * Deletes a value from the ART tree.
  * Returns:
- * - NULL if the item was not found, 
- * - otherwise the value pointer is returned.
+ * - POLICY_INVALID_ACCESS if the item was not found, 
+ * - otherwise the access right is returned.
  */
-VOID* art_delete(ART_TREE* tree, PCUNICODE_STRING unicode_key);
+ULONG art_delete(ART_TREE* tree, PCUNICODE_STRING unicode_key);
 
 /**
  * Searches for a value in the ART tree.
  * Returns:
- * - NULL if the item was not found, 
- * - otherwise the value pointer is returned.
+ * - POLICY_INVALID_ACCESS if the item was not found, 
+ * - otherwise the access right is returned.
  */
-VOID* art_search(const ART_TREE* tree, PCUNICODE_STRING key);
+ULONG art_search(const ART_TREE* tree, PCUNICODE_STRING key);
 
 /** Returns the minimum valued leaf or NULL. */
 ART_LEAF* art_minimum(ART_TREE* t);

@@ -22,7 +22,7 @@ void print(ART_NODE* node, USHORT depth) {
     if (IS_LEAF(node)) {
         ART_LEAF* leaf = LEAF_RAW(node);
         for (int i = 0; i < depth; ++i) DbgPrint(" ");
-        DbgPrint("LEAF: %s LEN: %u VALUE: %d\n\r", leaf->key, leaf->key_length, *((INT*)leaf->value));
+        DbgPrint("LEAF: %s LEN: %u VALUE: %lu\n\r", leaf->key, leaf->key_length, leaf->value);
         return;
     }
     
@@ -441,7 +441,7 @@ ART_LEAF* art_maximum(ART_TREE* t) {
     return maximum((ART_NODE*)t->root);
 }
 
-static ART_LEAF* make_leaf(CONST PUCHAR key, USHORT key_length, VOID* value) {
+static ART_LEAF* make_leaf(CONST PUCHAR key, USHORT key_length, ULONG value) {
     ART_LEAF* leaf = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ART_LEAF) + key_length, ART_TAG);
     if (leaf) {
         RtlZeroMemory(leaf, sizeof(ART_LEAF) + key_length);
@@ -618,11 +618,11 @@ static VOID add_child(ART_NODE* node, ART_NODE** ref, UCHAR c, VOID* child) {
     }
 }
 
-static VOID* recursive_insert(ART_NODE* node, ART_NODE** ref, CONST PUCHAR key, USHORT key_length, VOID* value, USHORT depth, int* old, int replace) {
+static ULONG recursive_insert(ART_NODE* node, ART_NODE** ref, CONST PUCHAR key, USHORT key_length, ULONG value, USHORT depth, BOOLEAN* old, BOOLEAN replace) {
     // If we are at a NULL node, inject a leaf
     if (!node) {
         *ref = (ART_NODE*)SET_LEAF(make_leaf(key, key_length, value));
-        return NULL;
+        return POLICY_INVALID_ACCESS;
     }
 
     // If we are at a leaf, we need to replace it with a node
@@ -631,8 +631,8 @@ static VOID* recursive_insert(ART_NODE* node, ART_NODE** ref, CONST PUCHAR key, 
 
         // Check if we are updating an existing value
         if (leaf_matches(leaf, key, key_length, depth)) {
-            *old = 1;
-            VOID* old_val = leaf->value;
+            *old = TRUE;
+            ULONG old_val = leaf->value;
             if (replace) {
                 leaf->value = value;
             }
@@ -653,7 +653,7 @@ static VOID* recursive_insert(ART_NODE* node, ART_NODE** ref, CONST PUCHAR key, 
         *ref = (ART_NODE*)new_node;
         add_child4(new_node, ref, leaf->key[depth + longest_prefix], SET_LEAF(leaf));
         add_child4(new_node, ref, new_leaf->key[depth + longest_prefix], SET_LEAF(new_leaf));
-        return NULL;
+        return POLICY_INVALID_ACCESS;
     }
 
     // Check if given node has a prefix
@@ -690,7 +690,7 @@ static VOID* recursive_insert(ART_NODE* node, ART_NODE** ref, CONST PUCHAR key, 
         // Insert the new leaf
         ART_LEAF* leaf = make_leaf(key, key_length, value);
         add_child4(new_node, ref, key[depth + prefix_diff], SET_LEAF(leaf));
-        return NULL;
+        return POLICY_INVALID_ACCESS;
     }
 
 RECURSE_SEARCH:;
@@ -704,16 +704,16 @@ RECURSE_SEARCH:;
     // No child, node goes within us
     ART_LEAF* leaf = make_leaf(key, key_length, value);
     add_child(node, ref, key[depth], SET_LEAF(leaf));
-    return NULL;
+    return POLICY_INVALID_ACCESS;
 }
 
-VOID* art_insert(ART_TREE* tree, PCUNICODE_STRING unicode_key, VOID* value) {
+ULONG art_insert(ART_TREE* tree, PCUNICODE_STRING unicode_key, ULONG value) {
     USHORT key_length;
     PUCHAR key = unicode_to_utf8(unicode_key, &key_length);
 
-    int old_value = 0;
-    VOID* old = recursive_insert(tree->root, &tree->root, key, key_length, value, 0, &old_value, 1);
-    if (!old_value) {
+    BOOLEAN is_exist = FALSE;
+    ULONG old = recursive_insert(tree->root, &tree->root, key, key_length, value, 0, &is_exist, TRUE);
+    if (!is_exist) {
         tree->size++;
     }
 
@@ -721,13 +721,13 @@ VOID* art_insert(ART_TREE* tree, PCUNICODE_STRING unicode_key, VOID* value) {
     return old;
 }
 
-VOID* art_insert_no_replace(ART_TREE* tree, PCUNICODE_STRING unicode_key, VOID* value) {
+ULONG art_insert_no_replace(ART_TREE* tree, PCUNICODE_STRING unicode_key, ULONG value) {
     USHORT key_length;
     PUCHAR key = unicode_to_utf8(unicode_key, &key_length);
 
-    int old_val = 0;
-    VOID* old = recursive_insert(tree->root, &tree->root, key, key_length, value, 0, &old_val, 0);
-    if (!old_val) {
+    BOOLEAN is_exist = FALSE;
+    ULONG old = recursive_insert(tree->root, &tree->root, key, key_length, value, 0, &is_exist, FALSE);
+    if (!is_exist) {
         tree->size++;
     }
 
@@ -901,12 +901,12 @@ static ART_LEAF* recursive_delete(ART_NODE* node, ART_NODE** ref, CONST PUCHAR k
     }
 }
 
-VOID* art_delete(ART_TREE* tree, PCUNICODE_STRING unicode_key) {
+ULONG art_delete(ART_TREE* tree, PCUNICODE_STRING unicode_key) {
     USHORT key_length;
     PUCHAR key = unicode_to_utf8(unicode_key, &key_length);
 
     ART_LEAF* leaf = recursive_delete(tree->root, &tree->root, key, key_length, 0);
-    VOID* old = NULL;
+    ULONG old = POLICY_INVALID_ACCESS;
     if (leaf) {
         tree->size--;
         old = leaf->value;
@@ -918,11 +918,11 @@ VOID* art_delete(ART_TREE* tree, PCUNICODE_STRING unicode_key) {
 }
 
 /** SEARCH Functions */
-VOID* art_search(CONST ART_TREE* tree, PCUNICODE_STRING unicode_key) {
+ULONG art_search(CONST ART_TREE* tree, PCUNICODE_STRING unicode_key) {
     USHORT key_length;
     PUCHAR key = unicode_to_utf8(unicode_key, &key_length);
 
-    VOID* ret_val = NULL;
+    ULONG access_right = POLICY_INVALID_ACCESS;
     ART_NODE** child;
     ART_NODE* node = tree->root;
     USHORT prefix_len, depth = 0;
@@ -932,11 +932,11 @@ VOID* art_search(CONST ART_TREE* tree, PCUNICODE_STRING unicode_key) {
             node = (ART_NODE*)LEAF_RAW(node);
             // Check if the expanded path matches
             if (leaf_matches((ART_LEAF*)node, key, key_length, depth)) {
-                ret_val = ((ART_LEAF*)node)->value;
+                access_right = ((ART_LEAF*)node)->value;
             }
 
             destroy_utf8_key(key);
-            return ret_val;
+            return access_right;
         }
 
         //  If the node has a prefix, check if it matches the key at the current depth
@@ -944,7 +944,7 @@ VOID* art_search(CONST ART_TREE* tree, PCUNICODE_STRING unicode_key) {
             prefix_len = check_prefix(node, key, key_length, depth);
             if (prefix_len != min(MAX_PREFIX_LENGTH, node->prefix_length)) {
                 destroy_utf8_key(key);
-                return NULL;
+                return access_right;
             }
             depth = depth + node->prefix_length;
         }
@@ -956,7 +956,7 @@ VOID* art_search(CONST ART_TREE* tree, PCUNICODE_STRING unicode_key) {
     }
 
     destroy_utf8_key(key);
-    return NULL;
+    return access_right;
 }
 
 /** ITERATION Functions */
