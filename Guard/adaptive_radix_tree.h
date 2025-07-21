@@ -30,7 +30,6 @@ typedef INT(*art_callback)(
 typedef struct _ART_NODE {
     NODE_TYPE type;
     USHORT num_of_child;
-    ULONG access_rights;
     USHORT prefix_length;
     UCHAR prefix[MAX_PREFIX_LENGTH];
 } ART_NODE;
@@ -62,7 +61,7 @@ typedef struct _ART_NODE256 {
 #pragma warning(disable : 4200) // Allow zero-sized array for flexible array member
 typedef struct _ART_LEAF {
     VOID* value;
-    UINT32 key_length;
+    USHORT key_length;
     UCHAR key[]; // arbitrary size, as they include the key
 } ART_LEAF;
 #pragma warning(pop)
@@ -73,7 +72,7 @@ typedef struct _ART_TREE {
 } ART_TREE;
 
 // Global ART tree used for system-wide policy tracking
-extern ART_TREE* g_art_tree;
+extern ART_TREE g_art_tree;
 
 /** Initializes an ART tree */
 int art_init_tree(ART_TREE* tree);
@@ -133,7 +132,8 @@ int art_iter(ART_TREE* tree, art_callback callback, VOID* data);
  * returns an integer stop value. If the callback returns non-zero, then the iteration stops.
  * Returns 0 on success, or the return of the callback.
  */
-int art_iter_prefix(ART_TREE* tree, CONST PUCHAR key, SIZE_T key_length, art_callback callback, VOID* data);
+int art_iter_prefix(ART_TREE* tree, CONST PUCHAR key, USHORT key_length, art_callback callback, VOID* data);
 
+void print(ART_NODE* node, USHORT depth);
 
 #endif // ADAPTIVE_RADIX_TREE_H

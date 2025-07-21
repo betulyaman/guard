@@ -4,6 +4,7 @@
 #include "global_context.h"
 #include "log.h"
 #include "pending_operation_list.h"
+#include "policy_manager.h"
 #include "security.h"
 
 #include <ntstrsafe.h>
@@ -53,7 +54,7 @@ NTSTATUS create_communication_port()
 	}
 
 	UNICODE_STRING portName;
-	RtlInitUnicodeString(&portName, COMMUNICATION_PORT_NAME);
+	RtlInitUnicodeStringEx(&portName, COMMUNICATION_PORT_NAME);
 
 	OBJECT_ATTRIBUTES object_attributes;
 	InitializeObjectAttributes(&object_attributes,
@@ -104,6 +105,7 @@ NTSTATUS message_notify_callback(
             }
             
             try {
+                ProbeForRead(input_buffer, sizeof(NONCE_SIZE), sizeof(UCHAR));
                 RtlCopyMemory(output_buffer, g_context.nonce, NONCE_SIZE);
                 *return_output_buffer_length = NONCE_SIZE;
             } except(exception_handler(GetExceptionInformation(), TRUE)) {
@@ -126,6 +128,7 @@ NTSTATUS message_notify_callback(
 
             USER_HMAC_SIGNATURE user_hmac_signature;
             try {
+                ProbeForRead(input_buffer, sizeof(USER_HMAC_SIGNATURE), sizeof(UCHAR));
                 RtlCopyMemory(user_hmac_signature.hmac, ((USER_HMAC_SIGNATURE*)input_buffer)->hmac, HMAC_SIZE);
             } except(exception_handler(GetExceptionInformation(), TRUE)) {
                 return GetExceptionCode();
@@ -151,30 +154,51 @@ NTSTATUS message_notify_callback(
 
         case CONNECTION_AUTHENTICATED:
         {
-            // initialization:
-            USER_INITIAL_CONTEXT user_initial_context;
+            USER_INITIAL_CONTEXT user_initial_context = { 0 };
+
             try {
-                RtlCopyMemory(&user_initial_context, ((USER_INITIAL_CONTEXT*)input_buffer), sizeof(USER_INITIAL_CONTEXT));
-            } except(exception_handler(GetExceptionInformation(), TRUE)) {
+                if (input_buffer_length < sizeof(USER_INITIAL_CONTEXT)) {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                ProbeForRead(input_buffer, sizeof(USER_INITIAL_CONTEXT), __alignof(USER_INITIAL_CONTEXT));
+                RtlCopyMemory(&user_initial_context, input_buffer, sizeof(USER_INITIAL_CONTEXT));
+            }
+            except (exception_handler(GetExceptionInformation(), TRUE)) {
                 return GetExceptionCode();
             }
 
             g_context.agent_process_id = user_initial_context.process_id;
-
             RtlCopyMemory(g_context.agent_installation_path, user_initial_context.installation_path, sizeof(user_initial_context.installation_path));
             RtlCopyMemory(g_context.local_db_path, user_initial_context.local_db_path, sizeof(user_initial_context.local_db_path));
 
-            //for (int i = 0; i < POLICY_NUMBER; ++i) {
-            //    g_context.policies[i].access_mask = user_initial_context.policies[i].access_mask;
-            //    RtlCopyMemory(g_context.policies[i].path, user_initial_context.policies[i].path, sizeof(context.policies[i].path));
-            //}
+            if (user_initial_context.policy_count == 0 ||
+                user_initial_context.policy_count > MAX_POLICY_COUNT) {
+                return STATUS_INVALID_PARAMETER;
+            }
 
-           //NTSTATUS status = policy_initialize();
-           // if (!NT_SUCCESS(status)) {
-           //     LOG_MSG("policy_initialize failed, status: 0x%x", status);
-           //     return status;
-           // }
+            // Initialize ART, add policies sent by user
+            art_init_tree(&g_art_tree);
 
+            SIZE_T sizeof_policy_array = user_initial_context.policy_count * sizeof(POLICY);
+            try {
+                ProbeForRead(user_initial_context.policies, sizeof_policy_array, __alignof(POLICY));
+            }
+            except(exception_handler(GetExceptionInformation(), TRUE)) {
+                return GetExceptionCode();
+            }
+
+            for (UINT16 i = 0; i < user_initial_context.policy_count; ++i) {
+                POLICY policy;
+                UNICODE_STRING unicode_string;
+                RtlCopyMemory(&policy, &user_initial_context.policies[i], sizeof(POLICY));
+                policy.path[MAX_FILE_NAME_LENGTH - 1] = L'\0';
+                RtlInitUnicodeStringEx(&unicode_string, policy.path);
+                art_insert(&g_art_tree, &unicode_string, &policy.access_mask);
+            }
+
+#if TEST
+            print(g_art_tree.root, 0);
+#endif
             //DbgPrint("Connection established.\n");
             //if ((input_buffer == NULL) ||
             //    (input_buffer_length < (FIELD_OFFSET(USER_RESPONSE, operation_id) +
@@ -218,6 +242,8 @@ NTSTATUS message_notify_callback(
             return STATUS_ACCESS_DENIED;
     }
 }
+
+
 
 NTSTATUS create_minifilter_request(_In_ PFLT_CALLBACK_DATA data, _In_ ULONG operation_id, _In_ OPERATION_TYPE operation_type, _Out_ MINIFILTER_REQUEST* message, PCFLT_RELATED_OBJECTS filter_objects) {
 

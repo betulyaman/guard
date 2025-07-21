@@ -12,9 +12,64 @@
 
 #define ART_TAG 'trAd'
 
-ART_TREE* g_art_tree = NULL;
+ART_TREE g_art_tree;
 
-static inline PUCHAR unicode_to_utf8(PCUNICODE_STRING unicode, PSIZE_T out_length) {
+void print(ART_NODE* node, USHORT depth) {
+    if (!node) {
+        return;
+    }
+
+    if (IS_LEAF(node)) {
+        ART_LEAF* leaf = LEAF_RAW(node);
+        for (int i = 0; i < depth; ++i) DbgPrint(" ");
+        DbgPrint("LEAF: %s LEN: %u VALUE: %d\n\r", leaf->key, leaf->key_length, *((INT*)leaf->value));
+        return;
+    }
+    
+    for (int i = 0; i < depth; ++i) DbgPrint(" ");
+    DbgPrint("NODE_TYPE: %d ADDR: %p NUM_OF_CHILD: %d PREFIX: %s PREFIX_LEN: %d\n\r", node->type, node, node->num_of_child, node->prefix, node->prefix_length);
+
+    switch (node->type) {
+    case NODE4:
+    {
+        ART_NODE4* node4 = (ART_NODE4*)node;
+        for (int i = 0; i < node4->base.num_of_child; ++i) {
+            print(node4->children[i], depth + 1);
+        }
+    } 
+    break;
+
+    case NODE16:
+    {
+        ART_NODE16* node16 = (ART_NODE16*)node;
+        for (int i = 0; i < node16->base.num_of_child; ++i) {
+            print(node16->children[i], depth + 1);
+        }
+    } 
+    break;
+
+    case NODE48:
+    {
+        ART_NODE48* node48 = (ART_NODE48*)node;
+        for (int i = 0; i < node48->base.num_of_child; ++i) {
+            print(node48->children[i], depth + 1);
+        }
+    }
+    break;
+
+    case NODE256:
+    {
+        ART_NODE256* node256 = (ART_NODE256*)node;
+        for (int i = 0; i < node256->base.num_of_child; ++i) {
+            print(node256->children[i], depth + 1);
+        }
+    }
+    break;
+
+    }
+}
+
+static inline PUCHAR unicode_to_utf8(PCUNICODE_STRING unicode, PUSHORT out_length) {
     NTSTATUS status;
 
     if (!unicode || !out_length) {
@@ -34,11 +89,11 @@ static inline PUCHAR unicode_to_utf8(PCUNICODE_STRING unicode, PSIZE_T out_lengt
     }
 
     // Perform actual conversion
-    ULONG written_length = 0;
+    USHORT written_length = 0;
     status = RtlUnicodeToUTF8N(
         (PCHAR)utf8_key,
         (ULONG)required_length,
-        &written_length,
+        (PULONG)&written_length,
         unicode->Buffer,
         unicode->Length
     );
@@ -166,15 +221,16 @@ int art_destroy_tree(ART_TREE* tree) {
 
 
 /** COMMON Local Functions */
-static SIZE_T leaf_matches(CONST ART_LEAF* leaf, CONST PUCHAR key, SIZE_T key_length, USHORT depth) {
+static BOOLEAN leaf_matches(CONST ART_LEAF* leaf, CONST PUCHAR key, SIZE_T key_length, USHORT depth) {
     (VOID)depth;
     // Fail if the key lengths are different
     if (leaf->key_length != (UINT32)key_length) {
-        return 1;
+        return FALSE;
     }
 
     // Compare the keys starting at the depth
-    return RtlCompareMemory(leaf->key, key, key_length);
+    SIZE_T matching_length = RtlCompareMemory(leaf->key, key, key_length);
+    return (matching_length == key_length);
 }
 
 static inline unsigned ctz(UINT32 x) {
@@ -261,8 +317,8 @@ static VOID copy_header(ART_NODE* dest, ART_NODE* src) {
     RtlCopyMemory(dest->prefix, src->prefix, min(MAX_PREFIX_LENGTH, src->prefix_length));
 }
 
-static USHORT check_prefix(CONST ART_NODE* node, CONST PUCHAR key, SIZE_T key_length, USHORT depth) {
-    USHORT maximum_prefix_length = min(min(node->prefix_length, MAX_PREFIX_LENGTH), (USHORT)key_length - depth);
+static USHORT check_prefix(CONST ART_NODE* node, CONST PUCHAR key, USHORT key_length, USHORT depth) {
+    USHORT maximum_prefix_length = min(min(node->prefix_length, MAX_PREFIX_LENGTH), key_length - depth);
 
     for (USHORT index = 0; index < maximum_prefix_length; index++) {
         if (node->prefix[index] != key[depth + index]) {
@@ -376,19 +432,20 @@ ART_LEAF* art_maximum(ART_TREE* t) {
     return maximum((ART_NODE*)t->root);
 }
 
-static ART_LEAF* make_leaf(CONST PUCHAR key, SIZE_T key_length, VOID* value) {
+static ART_LEAF* make_leaf(CONST PUCHAR key, USHORT key_length, VOID* value) {
     ART_LEAF* leaf = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ART_LEAF) + key_length, ART_TAG);
     if (leaf) {
         RtlZeroMemory(leaf, sizeof(ART_LEAF) + key_length);
         leaf->value = value;
-        leaf->key_length = (UINT32)key_length;
+        leaf->key_length = key_length;
         RtlCopyMemory(leaf->key, key, key_length);
     }
     return leaf;
 }
 
 static USHORT longest_common_prefix(ART_LEAF* leaf1, ART_LEAF* leaf2, USHORT depth) {
-    USHORT max_key_length = (USHORT)(min(leaf1->key_length, leaf2->key_length)) - depth;
+    ASSERT((min(leaf1->key_length, leaf2->key_length)) >= depth);
+    USHORT max_key_length = min(leaf1->key_length, leaf2->key_length) - depth;
 
     for (USHORT index = 0; index < max_key_length; index++) {
         if (leaf1->key[depth + index] != leaf2->key[depth + index])
@@ -397,10 +454,11 @@ static USHORT longest_common_prefix(ART_LEAF* leaf1, ART_LEAF* leaf2, USHORT dep
     return max_key_length;
 }
 
-static USHORT prefix_mismatch(CONST ART_NODE* node, CONST PUCHAR key, SIZE_T key_length, USHORT depth) {
+static USHORT prefix_mismatch(CONST ART_NODE* node, CONST PUCHAR key, USHORT key_length, USHORT depth) {
 #pragma warning( push )
 #pragma warning( disable : 4018 ) // '<': signed/unsigned mismatch
-    UINT32 maximum_prefix_length = min(min(MAX_PREFIX_LENGTH, node->prefix_length), (UINT32)key_length - depth);
+    ASSERT(key_length >= depth);
+    USHORT maximum_prefix_length = min(min(MAX_PREFIX_LENGTH, node->prefix_length), key_length - depth);
 #pragma warning( pop )
     USHORT index;
     for (index = 0; index < maximum_prefix_length; index++) {
@@ -412,7 +470,8 @@ static USHORT prefix_mismatch(CONST ART_NODE* node, CONST PUCHAR key, SIZE_T key
     if (node->prefix_length > MAX_PREFIX_LENGTH) {
         // Prefix is longer than what we've checked, find a leaf
         ART_LEAF* leaf = minimum(node);
-        maximum_prefix_length = min(leaf->key_length, (UINT32)key_length) - depth;
+        ASSERT(min(leaf->key_length, key_length) >= depth);
+        maximum_prefix_length = min(leaf->key_length, key_length) - depth;
         for (; index < maximum_prefix_length; index++) {
             if (leaf->key[index + depth] != key[depth + index]) {
                 return index;
@@ -422,14 +481,13 @@ static USHORT prefix_mismatch(CONST ART_NODE* node, CONST PUCHAR key, SIZE_T key
     return index;
 }
 
-static UINT8 add_child256(ART_NODE256* node, ART_NODE** ref, UCHAR c, VOID* child) {
+static VOID add_child256(ART_NODE256* node, ART_NODE** ref, UCHAR c, VOID* child) {
     (VOID)ref;
     node->base.num_of_child++;
     node->children[c] = (ART_NODE*)child;
-    return 0;
 }
 
-static UINT8 add_child48(ART_NODE48* node, ART_NODE** ref, UCHAR c, VOID* child) {
+static VOID add_child48(ART_NODE48* node, ART_NODE** ref, UCHAR c, VOID* child) {
     if (node->base.num_of_child < 48) {
         UINT8 pos = 0;
         while (node->children[pos]) {
@@ -451,10 +509,9 @@ static UINT8 add_child48(ART_NODE48* node, ART_NODE** ref, UCHAR c, VOID* child)
         free_node((ART_NODE*)node);
         add_child256(new_node, ref, c, child);
     }
-    return 0;
 }
 
-static UINT8 add_child16(ART_NODE16* node, ART_NODE** ref, UCHAR c, VOID* child) {
+static VOID add_child16(ART_NODE16* node, ART_NODE** ref, UCHAR c, VOID* child) {
     if (node->base.num_of_child < 16) {
         // Used to mask out bits for positions beyond existing children
         unsigned mask = (1 << node->base.num_of_child) - 1;
@@ -499,10 +556,9 @@ static UINT8 add_child16(ART_NODE16* node, ART_NODE** ref, UCHAR c, VOID* child)
         free_node((ART_NODE*)node);
         add_child48(new_node, ref, c, child);
     }
-    return 0;
 }
 
-static UINT8 add_child4(ART_NODE4* node, ART_NODE** ref, UCHAR c, VOID* child) {
+static VOID add_child4(ART_NODE4* node, ART_NODE** ref, UCHAR c, VOID* child) {
     if (node->base.num_of_child < 4) {
         int idx;
         for (idx = 0; idx < node->base.num_of_child; idx++) {
@@ -532,26 +588,28 @@ static UINT8 add_child4(ART_NODE4* node, ART_NODE** ref, UCHAR c, VOID* child) {
         free_node((ART_NODE*)node);
         add_child16(new_node, ref, c, child);
     }
-    return 0;
 }
 
-static UINT8 add_child(ART_NODE* node, ART_NODE** ref, UCHAR c, VOID* child) {
+static VOID add_child(ART_NODE* node, ART_NODE** ref, UCHAR c, VOID* child) {
     switch (node->type) {
     case NODE4:
-        return add_child4((ART_NODE4*)node, ref, c, child);
+        add_child4((ART_NODE4*)node, ref, c, child);
+        break;
     case NODE16:
-        return add_child16((ART_NODE16*)node, ref, c, child);
+        add_child16((ART_NODE16*)node, ref, c, child);
+        break;
     case NODE48:
-        return add_child48((ART_NODE48*)node, ref, c, child);
+        add_child48((ART_NODE48*)node, ref, c, child);
+        break;
     case NODE256:
-        return add_child256((ART_NODE256*)node, ref, c, child);
+        add_child256((ART_NODE256*)node, ref, c, child);
+        break;
     default:
         LOG_MSG("Unexpected NODE type!");
     }
-    return 0;
 }
 
-static VOID* recursive_insert(ART_NODE* node, ART_NODE** ref, CONST PUCHAR key, SIZE_T key_length, VOID* value, USHORT depth, int* old, int replace) {
+static VOID* recursive_insert(ART_NODE* node, ART_NODE** ref, CONST PUCHAR key, USHORT key_length, VOID* value, USHORT depth, int* old, int replace) {
     // If we are at a NULL node, inject a leaf
     if (!node) {
         *ref = (ART_NODE*)SET_LEAF(make_leaf(key, key_length, value));
@@ -563,7 +621,7 @@ static VOID* recursive_insert(ART_NODE* node, ART_NODE** ref, CONST PUCHAR key, 
         ART_LEAF* leaf = LEAF_RAW(node);
 
         // Check if we are updating an existing value
-        if (!leaf_matches(leaf, key, key_length, depth)) {
+        if (leaf_matches(leaf, key, key_length, depth)) {
             *old = 1;
             VOID* old_val = leaf->value;
             if (replace) {
@@ -641,7 +699,7 @@ RECURSE_SEARCH:;
 }
 
 VOID* art_insert(ART_TREE* tree, PCUNICODE_STRING unicode_key, VOID* value) {
-    SIZE_T key_length;
+    USHORT key_length;
     PUCHAR key = unicode_to_utf8(unicode_key, &key_length);
 
     int old_value = 0;
@@ -655,7 +713,7 @@ VOID* art_insert(ART_TREE* tree, PCUNICODE_STRING unicode_key, VOID* value) {
 }
 
 VOID* art_insert_no_replace(ART_TREE* tree, PCUNICODE_STRING unicode_key, VOID* value) {
-    SIZE_T key_length;
+    USHORT key_length;
     PUCHAR key = unicode_to_utf8(unicode_key, &key_length);
 
     int old_val = 0;
@@ -670,7 +728,7 @@ VOID* art_insert_no_replace(ART_TREE* tree, PCUNICODE_STRING unicode_key, VOID* 
 
 
 /** REMOVE Functions*/
-static UINT8 remove_child256(ART_NODE256* node, ART_NODE** ref, UCHAR c) {
+static VOID remove_child256(ART_NODE256* node, ART_NODE** ref, UCHAR c) {
     node->children[c] = NULL;
     node->base.num_of_child--;
 
@@ -691,10 +749,9 @@ static UINT8 remove_child256(ART_NODE256* node, ART_NODE** ref, UCHAR c) {
         }
         free_node((ART_NODE*)node);
     }
-    return 0;
 }
 
-static UINT8 remove_child48(ART_NODE48* node, ART_NODE** ref, UCHAR c) {
+static VOID remove_child48(ART_NODE48* node, ART_NODE** ref, UCHAR c) {
     int pos = node->child_index[c];
     node->child_index[c] = 0;
     node->children[pos - 1] = NULL;
@@ -716,13 +773,14 @@ static UINT8 remove_child48(ART_NODE48* node, ART_NODE** ref, UCHAR c) {
         }
         free_node((ART_NODE*)node);
     }
-    return 0;
 }
 
-static UINT8 remove_child16(ART_NODE16* node, ART_NODE** ref, ART_NODE** leaf) {
-    UINT64 pos = leaf - node->children;
-    RtlMoveMemory(node->keys + pos, node->keys + pos + 1, node->base.num_of_child - 1 - pos);
-    RtlMoveMemory(node->children + pos, node->children + pos + 1, (node->base.num_of_child - 1 - pos) * sizeof(VOID*));
+static VOID remove_child16(ART_NODE16* node, ART_NODE** ref, ART_NODE** leaf) {
+    INT64 pos = leaf - node->children;
+    ASSERT(pos > 0 && pos < 14); // because of (pos + 1)
+    ASSERT(node->base.num_of_child >= pos + 1);
+    RtlMoveMemory(&node->keys[pos], &node->keys[pos + 1], node->base.num_of_child - 1 - pos);
+    RtlMoveMemory(&node->children[pos], &node->children[pos + 1], (node->base.num_of_child - 1 - pos) * sizeof(VOID*));
     node->base.num_of_child--;
 
     if (node->base.num_of_child == 3) {
@@ -733,13 +791,14 @@ static UINT8 remove_child16(ART_NODE16* node, ART_NODE** ref, ART_NODE** leaf) {
         RtlCopyMemory(new_node->children, node->children, 4 * sizeof(VOID*));
         free_node((ART_NODE*)node);
     }
-    return 0;
 }
 
-static UINT8 remove_child4(ART_NODE4* node, ART_NODE** ref, ART_NODE** leaf) {
-    UINT64 pos = leaf - node->children;
-    RtlMoveMemory(node->keys + pos, node->keys + pos + 1, node->base.num_of_child - 1 - pos);
-    RtlMoveMemory(node->children + pos, node->children + pos + 1, (node->base.num_of_child - 1 - pos) * sizeof(VOID*));
+static VOID remove_child4(ART_NODE4* node, ART_NODE** ref, ART_NODE** leaf) {
+    INT64 pos = leaf - node->children;
+    ASSERT(pos > 0 && pos < 2); // because of (pos + 1)
+    ASSERT(node->base.num_of_child >= pos + 1);
+    RtlMoveMemory(&node->keys[pos], &node->keys[pos + 1], node->base.num_of_child - 1 - pos);
+    RtlMoveMemory(&node->children[pos], &node->children[pos + 1], (node->base.num_of_child - 1 - pos) * sizeof(VOID*));
     node->base.num_of_child--;
 
     // Remove nodes with only a single child
@@ -765,26 +824,28 @@ static UINT8 remove_child4(ART_NODE4* node, ART_NODE** ref, ART_NODE** leaf) {
         *ref = child;
         free_node((ART_NODE*)node);
     }
-    return 0;
 }
 
-static UINT8 remove_child(ART_NODE* node, ART_NODE** ref, UCHAR c, ART_NODE** l) {
+static VOID remove_child(ART_NODE* node, ART_NODE** ref, UCHAR c, ART_NODE** l) {
     switch (node->type) {
     case NODE4:
-        return remove_child4((ART_NODE4*)node, ref, l);
+        remove_child4((ART_NODE4*)node, ref, l);
+        break;
     case NODE16:
-        return remove_child16((ART_NODE16*)node, ref, l);
+        remove_child16((ART_NODE16*)node, ref, l);
+        break;
     case NODE48:
-        return remove_child48((ART_NODE48*)node, ref, c);
+        remove_child48((ART_NODE48*)node, ref, c);
+        break;
     case NODE256:
-        return remove_child256((ART_NODE256*)node, ref, c);
+        remove_child256((ART_NODE256*)node, ref, c);
+        break;
     default:
         LOG_MSG("Unexpected NODE type!");
     }
-    return 0;
 }
 
-static ART_LEAF* recursive_delete(ART_NODE* node, ART_NODE** ref, CONST PUCHAR key, SIZE_T key_length, USHORT depth) {
+static ART_LEAF* recursive_delete(ART_NODE* node, ART_NODE** ref, CONST PUCHAR key, USHORT key_length, USHORT depth) {
     // Search terminated
     if (!node) {
         return NULL;
@@ -793,7 +854,7 @@ static ART_LEAF* recursive_delete(ART_NODE* node, ART_NODE** ref, CONST PUCHAR k
     // Handle hitting a leaf node
     if (IS_LEAF(node)) {
         ART_LEAF* leaf = LEAF_RAW(node);
-        if (!leaf_matches(leaf, key, key_length, depth)) {
+        if (leaf_matches(leaf, key, key_length, depth)) {
             *ref = NULL;
             return leaf;
         }
@@ -818,7 +879,7 @@ static ART_LEAF* recursive_delete(ART_NODE* node, ART_NODE** ref, CONST PUCHAR k
     // If the child is leaf, delete from this node
     if (IS_LEAF(*child)) {
         ART_LEAF* leaf = LEAF_RAW(*child);
-        if (!leaf_matches(leaf, key, key_length, depth)) {
+        if (leaf_matches(leaf, key, key_length, depth)) {
             remove_child(node, ref, key[depth], child);
             return leaf;
         }
@@ -832,28 +893,27 @@ static ART_LEAF* recursive_delete(ART_NODE* node, ART_NODE** ref, CONST PUCHAR k
 }
 
 VOID* art_delete(ART_TREE* tree, PCUNICODE_STRING unicode_key) {
-    SIZE_T key_length;
+    USHORT key_length;
     PUCHAR key = unicode_to_utf8(unicode_key, &key_length);
 
     ART_LEAF* leaf = recursive_delete(tree->root, &tree->root, key, key_length, 0);
+    VOID* old = NULL;
     if (leaf) {
         tree->size--;
-        VOID* old = leaf->value;
-        ExFreePoolWithTag(leaf, ART_TAG);
-
-        destroy_utf8_key(key);
-        return old;
+        old = leaf->value;
+        free_node((ART_NODE*)leaf);
     }
 
     destroy_utf8_key(key);
-    return NULL;
+    return old;
 }
 
 /** SEARCH Functions */
 VOID* art_search(CONST ART_TREE* tree, PCUNICODE_STRING unicode_key) {
-    SIZE_T key_length;
+    USHORT key_length;
     PUCHAR key = unicode_to_utf8(unicode_key, &key_length);
 
+    VOID* ret_val = NULL;
     ART_NODE** child;
     ART_NODE* node = tree->root;
     USHORT prefix_len, depth = 0;
@@ -862,13 +922,12 @@ VOID* art_search(CONST ART_TREE* tree, PCUNICODE_STRING unicode_key) {
         if (IS_LEAF(node)) {
             node = (ART_NODE*)LEAF_RAW(node);
             // Check if the expanded path matches
-            if (!leaf_matches((ART_LEAF*)node, key, key_length, depth)) {
-                destroy_utf8_key(key);
-                return ((ART_LEAF*)node)->value;
+            if (leaf_matches((ART_LEAF*)node, key, key_length, depth)) {
+                ret_val = ((ART_LEAF*)node)->value;
             }
 
             destroy_utf8_key(key);
-            return NULL;
+            return ret_val;
         }
 
         //  If the node has a prefix, check if it matches the key at the current depth
@@ -969,17 +1028,17 @@ int art_iter(ART_TREE* tree, art_callback callback, VOID* data) {
     return recursive_iter(tree->root, callback, data);
 }
 
-static SIZE_T leaf_prefix_matches(CONST ART_LEAF* node, CONST PUCHAR prefix, SIZE_T prefix_len) {
+static BOOLEAN leaf_prefix_matches(CONST ART_LEAF* node, CONST PUCHAR prefix, USHORT prefix_len) {
     // Fail if the key length is too short
     if (node->key_length < (UINT32)prefix_len) {
-        return 1;
+        return FALSE;
     }
 
     // Compare the keys
-    return RtlCompareMemory(node->key, prefix, prefix_len);
+    return (RtlCompareMemory(node->key, prefix, prefix_len) == prefix_len);
 }
 
-int art_iter_prefix(ART_TREE* tree, CONST PUCHAR key, SIZE_T key_length, art_callback callback, VOID* data) {
+int art_iter_prefix(ART_TREE* tree, CONST PUCHAR key, USHORT key_length, art_callback callback, VOID* data) {
     ART_NODE** child;
     ART_NODE* node = tree->root;
     SHORT prefix_len, depth = 0;
@@ -988,7 +1047,7 @@ int art_iter_prefix(ART_TREE* tree, CONST PUCHAR key, SIZE_T key_length, art_cal
         if (IS_LEAF(node)) {
             node = (ART_NODE*)LEAF_RAW(node);
             // Check if the expanded path matches
-            if (!leaf_prefix_matches((ART_LEAF*)node, key, key_length)) {
+            if (leaf_prefix_matches((ART_LEAF*)node, key, key_length)) {
                 ART_LEAF* leaf = (ART_LEAF*)node;
                 return callback(data, (CONST PUCHAR)leaf->key, leaf->key_length, leaf->value);
             }
@@ -998,7 +1057,7 @@ int art_iter_prefix(ART_TREE* tree, CONST PUCHAR key, SIZE_T key_length, art_cal
         // If the depth matches the prefix, we need to handle this node
         if (depth == key_length) {
             ART_LEAF* leaf = minimum(node);
-            if (!leaf_prefix_matches(leaf, key, key_length)) {
+            if (leaf_prefix_matches(leaf, key, key_length)) {
                 return recursive_iter(node, callback, data);
             }
             return 0;
