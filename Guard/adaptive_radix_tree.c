@@ -103,8 +103,17 @@ static inline PUCHAR unicode_to_utf8(PCUNICODE_STRING unicode, PUSHORT out_lengt
         return NULL;
     }
 
-    *out_length = written_length;
     utf8_key[written_length] = '\0';
+
+    // Lowercase in place
+    for (USHORT i = 0; i < written_length; ++i) {
+        // Lowercase only ASCII A-Z (0x41 - 0x5A) to a-z (0x61 - 0x7A)
+        if (utf8_key[i] >= 'A' && utf8_key[i] <= 'Z') {
+            utf8_key[i] += 0x20;
+        }
+    }
+
+    *out_length = written_length;
     return utf8_key;
 }
 
