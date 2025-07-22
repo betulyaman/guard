@@ -17,6 +17,9 @@
       <UniqueIdentifier>{8E41214B-6785-4CFE-B992-037D68949A14}</UniqueIdentifier>
       <Extensions>inf;inv;inx;mof;mc;</Extensions>
     </Filter>
+    <Filter Include="Tests">
+      <UniqueIdentifier>{79033456-83b6-4f68-a120-fd4647640fb5}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <Inf Include="Guard.inf">
@@ -48,8 +51,11 @@
     <ClCompile Include="adaptive_radix_tree.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="policy_manager.c">
+    <ClCompile Include="security.c">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="TEST_adaptive_radix_tree.c">
+      <Filter>Tests</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -83,8 +89,11 @@
     <ClInclude Include="adaptive_radix_tree.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="policy_manager.h">
+    <ClInclude Include="security.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="TEST_adaptive_radix_tree.h">
+      <Filter>Tests</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

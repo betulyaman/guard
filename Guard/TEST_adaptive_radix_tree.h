@@ -13,7 +13,7 @@
         if (condition) { \
             DbgPrint("[SUCCESS] " msg "\n\r" __VA_OPT__(,) __VA_ARGS__); \
         } else { \
-            DbgPrint("[FAILED] " msg "\n\r" __VA_OPT__(,) __VA_ARGS__); \
+            ASSERT(condition); \
         } \
     } while (0)
 

@@ -71,6 +71,7 @@
   <PropertyGroup />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
+    <Inf2CatUseLocalTime>true</Inf2CatUseLocalTime>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
@@ -91,6 +92,7 @@
     <ClCompile>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
       <AdditionalIncludeDirectories>D:\workspace\Minifilter\inc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <UseStandardPreprocessor>true</UseStandardPreprocessor>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -120,10 +122,10 @@
     <ClCompile Include="global_context.c" />
     <ClCompile Include="minifilter.c" />
     <ClCompile Include="pending_operation_list.c" />
-    <ClCompile Include="policy_manager.c" />
     <ClCompile Include="preoperation_callbacks.c" />
     <ClCompile Include="adaptive_radix_tree.c" />
     <ClCompile Include="security.c" />
+    <ClCompile Include="TEST_adaptive_radix_tree.c" />
     <ClCompile Include="windows_service_controls.c" />
   </ItemGroup>
   <ItemGroup>
@@ -133,11 +135,11 @@
     <ClInclude Include="global_context.h" />
     <ClInclude Include="log.h" />
     <ClInclude Include="minifilter.h" />
-    <ClInclude Include="policy_manager.h" />
     <ClInclude Include="preoperation_callbacks.h" />
     <ClInclude Include="pending_operation_list.h" />
     <ClInclude Include="adaptive_radix_tree.h" />
     <ClInclude Include="security.h" />
+    <ClInclude Include="TEST_adaptive_radix_tree.h" />
     <ClInclude Include="windows_service_controls.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
