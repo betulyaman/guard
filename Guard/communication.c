@@ -4,7 +4,6 @@
 #include "global_context.h"
 #include "log.h"
 #include "pending_operation_list.h"
-#include "policy_manager.h"
 #include "security.h"
 
 #include <ntstrsafe.h>
@@ -193,7 +192,7 @@ NTSTATUS message_notify_callback(
                 RtlCopyMemory(&policy, &user_initial_context.policies[i], sizeof(POLICY));
                 policy.path[MAX_FILE_NAME_LENGTH - 1] = L'\0';
                 RtlInitUnicodeStringEx(&unicode_string, policy.path);
-                art_insert(&g_art_tree, &unicode_string, &policy.access_mask);
+                art_insert(&g_art_tree, &unicode_string, policy.access_mask);
             }
 
 #if TEST

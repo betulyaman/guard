@@ -18,7 +18,6 @@ typedef struct {
 	PFLT_FILTER registered_filter;
 	PFLT_PORT server_port;
 	PFLT_PORT client_port;
-	POLICY policies[POLICY_NUMBER];
 } GLOBAL_CONTEXT;
 
 extern GLOBAL_CONTEXT g_context;

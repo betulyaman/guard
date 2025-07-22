@@ -72,11 +72,11 @@ FLT_PREOP_CALLBACK_STATUS pre_operation_callback(
 		return FLT_PREOP_COMPLETE;
 	}
 
-	//if (!is_authorized(data)) {
-	//	data->IoStatus.Status = STATUS_ACCESS_DENIED;
-	//	data->IoStatus.Information = 0;
-	//	return FLT_PREOP_COMPLETE;
-	//}
+	if (!is_authorized(data)) {
+		data->IoStatus.Status = STATUS_ACCESS_DENIED;
+		data->IoStatus.Information = 0;
+		return FLT_PREOP_COMPLETE;
+	}
 
 	//// Allow rename operations that are part of allowed write flows, while still denying malicious or unrelated renames.
 	//if (operation_type == OPERATION_TYPE_RENAME) {

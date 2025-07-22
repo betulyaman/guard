@@ -622,7 +622,7 @@ static ULONG recursive_insert(ART_NODE* node, ART_NODE** ref, CONST PUCHAR key, 
     // If we are at a NULL node, inject a leaf
     if (!node) {
         *ref = (ART_NODE*)SET_LEAF(make_leaf(key, key_length, value));
-        return POLICY_INVALID_ACCESS;
+        return POLICY_NONE;
     }
 
     // If we are at a leaf, we need to replace it with a node
@@ -653,7 +653,7 @@ static ULONG recursive_insert(ART_NODE* node, ART_NODE** ref, CONST PUCHAR key, 
         *ref = (ART_NODE*)new_node;
         add_child4(new_node, ref, leaf->key[depth + longest_prefix], SET_LEAF(leaf));
         add_child4(new_node, ref, new_leaf->key[depth + longest_prefix], SET_LEAF(new_leaf));
-        return POLICY_INVALID_ACCESS;
+        return POLICY_NONE;
     }
 
     // Check if given node has a prefix
@@ -690,7 +690,7 @@ static ULONG recursive_insert(ART_NODE* node, ART_NODE** ref, CONST PUCHAR key, 
         // Insert the new leaf
         ART_LEAF* leaf = make_leaf(key, key_length, value);
         add_child4(new_node, ref, key[depth + prefix_diff], SET_LEAF(leaf));
-        return POLICY_INVALID_ACCESS;
+        return POLICY_NONE;
     }
 
 RECURSE_SEARCH:;
@@ -704,7 +704,7 @@ RECURSE_SEARCH:;
     // No child, node goes within us
     ART_LEAF* leaf = make_leaf(key, key_length, value);
     add_child(node, ref, key[depth], SET_LEAF(leaf));
-    return POLICY_INVALID_ACCESS;
+    return POLICY_NONE;
 }
 
 ULONG art_insert(ART_TREE* tree, PCUNICODE_STRING unicode_key, ULONG value) {
@@ -906,7 +906,7 @@ ULONG art_delete(ART_TREE* tree, PCUNICODE_STRING unicode_key) {
     PUCHAR key = unicode_to_utf8(unicode_key, &key_length);
 
     ART_LEAF* leaf = recursive_delete(tree->root, &tree->root, key, key_length, 0);
-    ULONG old = POLICY_INVALID_ACCESS;
+    ULONG old = POLICY_NONE;
     if (leaf) {
         tree->size--;
         old = leaf->value;
@@ -922,7 +922,7 @@ ULONG art_search(CONST ART_TREE* tree, PCUNICODE_STRING unicode_key) {
     USHORT key_length;
     PUCHAR key = unicode_to_utf8(unicode_key, &key_length);
 
-    ULONG access_right = POLICY_INVALID_ACCESS;
+    ULONG access_right = POLICY_NONE;
     ART_NODE** child;
     ART_NODE* node = tree->root;
     USHORT prefix_len, depth = 0;

@@ -6,6 +6,7 @@
 #define COMMUNICATION_PORT_NAME L"\\CommunicationPort"
 #define MAX_FILE_NAME_LENGTH 260
 #define POLICY_NUMBER 3
+#define MAX_POLICY_COUNT 64
 
 typedef enum {
 	OPERATION_TYPE_INVALID = 0,
@@ -39,7 +40,8 @@ typedef struct {
 	LONG process_id;
 	WCHAR installation_path[MAX_FILE_NAME_LENGTH];
 	WCHAR local_db_path[MAX_FILE_NAME_LENGTH];
-	//POLICY policies[POLICY_NUMBER];
+	UINT16 policy_count;
+	POLICY* policies;
 } USER_INITIAL_CONTEXT;
 
 #endif //GUARD_COMMUNICATION_INFO_H

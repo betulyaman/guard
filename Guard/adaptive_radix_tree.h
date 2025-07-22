@@ -6,7 +6,7 @@
 #define MAX_PREFIX_LENGTH 23 // \\device\\harddiskvolumeX\\
 
 // Policy mask definitions for access control integration
-#define POLICY_INVALID_ACCESS       0
+#define POLICY_NONE                 0
 #define POLICY_MASK_READ            FILE_GENERIC_READ
 #define POLICY_MASK_WRITE           FILE_GENERIC_WRITE
 #define POLICY_MASK_EXECUTE         FILE_GENERIC_EXECUTE
