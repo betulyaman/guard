@@ -19,6 +19,12 @@ typedef enum {
 //	OPERATION_TYPE_WRITE,
 } OPERATION_TYPE;
 
+typedef enum {
+	POLICY_STATUS_NONE = 0,
+	POLICY_STATUS_ADD,
+	POLICY_STATUS_REMOVE
+} POLICY_STATUS;
+
 typedef struct {
 	ULONG operation_id;
 	BOOLEAN allow;
@@ -32,6 +38,7 @@ typedef struct {
 } MINIFILTER_REQUEST;
 
 typedef struct {
+	UINT8 status;
 	ULONG access_mask;
 	WCHAR path[MAX_FILE_NAME_LENGTH];
 } POLICY;

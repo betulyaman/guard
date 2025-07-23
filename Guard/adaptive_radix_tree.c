@@ -3,7 +3,6 @@
 #include "log.h"
 
 #include <ntifs.h>
-#include <intrin.h> // For _mm_cmpeq_epi8, _mm_movemask_epi8
 
 
 #define IS_LEAF(x) (((uintptr_t)x & 1))
@@ -14,61 +13,126 @@
 
 ART_TREE g_art_tree;
 
-void print(ART_NODE* node, USHORT depth) {
-    if (!node) {
-        return;
-    }
+#if TEST
 
-    if (IS_LEAF(node)) {
-        ART_LEAF* leaf = LEAF_RAW(node);
-        for (int i = 0; i < depth; ++i) DbgPrint(" ");
-        DbgPrint("LEAF: %s LEN: %u VALUE: %lu\n\r", leaf->key, leaf->key_length, leaf->value);
-        return;
-    }
-    
-    for (int i = 0; i < depth; ++i) DbgPrint(" ");
-    DbgPrint("NODE_TYPE: %d ADDR: %p NUM_OF_CHILD: %d PREFIX: %s PREFIX_LEN: %d\n\r", node->type, node, node->num_of_child, node->prefix, node->prefix_length);
-
-    switch (node->type) {
-    case NODE4:
-    {
-        ART_NODE4* node4 = (ART_NODE4*)node;
-        for (int i = 0; i < node4->base.num_of_child; ++i) {
-            print(node4->children[i], depth + 1);
-        }
-    } 
-    break;
-
-    case NODE16:
-    {
-        ART_NODE16* node16 = (ART_NODE16*)node;
-        for (int i = 0; i < node16->base.num_of_child; ++i) {
-            print(node16->children[i], depth + 1);
-        }
-    } 
-    break;
-
-    case NODE48:
-    {
-        ART_NODE48* node48 = (ART_NODE48*)node;
-        for (int i = 0; i < node48->base.num_of_child; ++i) {
-            print(node48->children[i], depth + 1);
-        }
-    }
-    break;
-
-    case NODE256:
-    {
-        ART_NODE256* node256 = (ART_NODE256*)node;
-        for (int i = 0; i < node256->base.num_of_child; ++i) {
-            print(node256->children[i], depth + 1);
-        }
-    }
-    break;
-
+/** PRINT Function */
+// Utility to print indentation
+static VOID print_indent(USHORT depth) {
+    for (int i = 0; i < depth; i++) {
+        DbgPrint("  ");
     }
 }
 
+// Utility to print a key safely
+static VOID print_key(_In_reads_bytes_(len) CONST UCHAR* key, _In_ int len) {
+    for (int i = 0; i < len; i++) {
+        unsigned char c = key[i];
+        if (c >= 32 && c <= 126) { // ASCII printable range
+            DbgPrint("%c", c);
+        }
+        else {
+            DbgPrint("\\x%02x", c);
+        }
+    }
+}
+
+// Utility to print a character or '.' if non-printable
+static VOID print_char_or_dot(unsigned char c) {
+    if (c >= 32 && c <= 126) {
+        DbgPrint("%c", c);
+    }
+    else {
+        DbgPrint(".");
+    }
+}
+
+// Main ART node recursive printer
+static VOID print_art_node(ART_NODE* n, USHORT depth) {
+    if (!n) {
+        print_indent(depth);
+        DbgPrint("(null)\n\r");
+        return;
+    }
+
+    if (IS_LEAF(n)) {
+        ART_LEAF* l = LEAF_RAW(n);
+        print_indent(depth);
+        DbgPrint("Leaf: key=\"");
+        print_key(l->key, l->key_length);
+        DbgPrint("\" len=%d, value=%p\n\r", l->key_length, l->value);
+        return;
+    }
+
+    // Print node header
+    print_indent(depth);
+    DbgPrint("Node type=%d, num_children=%d, partial_len=%d, partial=\"",
+        n->type, n->num_of_child, n->prefix_length);
+    print_key(n->prefix, n->prefix_length);
+    DbgPrint("\"");
+    DbgPrint("\n\r");
+
+    switch (n->type) {
+    case NODE4: {
+        ART_NODE4* node = (ART_NODE4*)n;
+        for (int i = 0; i < node->base.num_of_child; i++) {
+            print_indent(depth + 1);
+            DbgPrint("key=0x%02x ('", node->keys[i]);
+            print_char_or_dot(node->keys[i]);
+            DbgPrint("'):");
+            print_art_node(node->children[i], depth + 2);
+        }
+        break;
+    }
+    case NODE16: {
+        ART_NODE16* node = (ART_NODE16*)n;
+        for (int i = 0; i < node->base.num_of_child; i++) {
+            print_indent(depth + 1);
+            DbgPrint("key=0x%02x ('", node->keys[i]);
+            print_char_or_dot(node->keys[i]);
+            DbgPrint("'):");
+            print_art_node(node->children[i], depth + 2);
+        }
+        break;
+    }
+    case NODE48: {
+        ART_NODE48* node = (ART_NODE48*)n;
+        for (int i = 0; i < 256; i++) {
+            int pos = node->child_index[i];
+            if (pos) {
+                print_indent(depth + 1);
+                DbgPrint("key=0x%02x ('", i);
+                print_char_or_dot((unsigned char)i);
+                DbgPrint("'):");
+                print_art_node(node->children[pos - 1], depth + 2);
+            }
+        }
+        break;
+    }
+    case NODE256: {
+        ART_NODE256* node = (ART_NODE256*)n;
+        for (int i = 0; i < 256; i++) {
+            if (node->children[i]) {
+                print_indent(depth + 1);
+                DbgPrint("key=0x%02x ('", i);
+                print_char_or_dot((unsigned char)i);
+                DbgPrint("'):");
+                print_art_node(node->children[i], depth + 2);
+            }
+        }
+        break;
+    }
+    default:
+        DbgPrint("Unexpected node type!");
+    }
+}
+
+// Entry point to print the ART tree
+VOID art_print_tree(ART_TREE* t) {
+    DbgPrint("=== ART Tree Dump (size=%llu) ===\n\r", t->size);
+    print_art_node(t->root, 0);
+    DbgPrint("=== End of Tree Dump ===\n\r");
+}
+#endif
 static inline PUCHAR unicode_to_utf8(PCUNICODE_STRING unicode, PUSHORT out_length) {
     NTSTATUS status;
 
@@ -453,7 +517,12 @@ static ART_LEAF* make_leaf(CONST PUCHAR key, USHORT key_length, ULONG value) {
 }
 
 static USHORT longest_common_prefix(ART_LEAF* leaf1, ART_LEAF* leaf2, USHORT depth) {
-    ASSERT((min(leaf1->key_length, leaf2->key_length)) >= depth);
+    
+    if ((min(leaf1->key_length, leaf2->key_length)) < depth) {
+        DbgPrint("longest_common_prefix: (min(leaf1->key_length, leaf2->key_length)) < depth");
+        return 0;
+    }
+
     USHORT max_key_length = min(leaf1->key_length, leaf2->key_length) - depth;
 
     for (USHORT index = 0; index < max_key_length; index++) {
@@ -466,7 +535,10 @@ static USHORT longest_common_prefix(ART_LEAF* leaf1, ART_LEAF* leaf2, USHORT dep
 static USHORT prefix_mismatch(CONST ART_NODE* node, CONST PUCHAR key, USHORT key_length, USHORT depth) {
 #pragma warning( push )
 #pragma warning( disable : 4018 ) // '<': signed/unsigned mismatch
-    ASSERT(key_length >= depth);
+    if(key_length < depth) {
+        DbgPrint("prefix_mismatch: key_length < depth");
+        return 0;
+    }
     USHORT maximum_prefix_length = min(min(MAX_PREFIX_LENGTH, node->prefix_length), key_length - depth);
 #pragma warning( pop )
     USHORT index;
@@ -479,7 +551,10 @@ static USHORT prefix_mismatch(CONST ART_NODE* node, CONST PUCHAR key, USHORT key
     if (node->prefix_length > MAX_PREFIX_LENGTH) {
         // Prefix is longer than what we've checked, find a leaf
         ART_LEAF* leaf = minimum(node);
-        ASSERT(min(leaf->key_length, key_length) >= depth);
+        if(min(leaf->key_length, key_length) < depth) {
+            DbgPrint("prefix_mismatch: min(leaf->key_length, key_length) < depth");
+            return 0;
+        }
         maximum_prefix_length = min(leaf->key_length, key_length) - depth;
         for (; index < maximum_prefix_length; index++) {
             if (leaf->key[index + depth] != key[depth + index]) {
@@ -786,8 +861,16 @@ static VOID remove_child48(ART_NODE48* node, ART_NODE** ref, UCHAR c) {
 
 static VOID remove_child16(ART_NODE16* node, ART_NODE** ref, ART_NODE** leaf) {
     INT64 pos = leaf - node->children;
-    ASSERT(pos > 0 && pos < 14); // because of (pos + 1)
-    ASSERT(node->base.num_of_child >= pos + 1);
+    if(pos < 0 || pos > 14) {
+        DbgPrint("remove_child16: pos < 0 || pos > 14");
+        return;
+    }
+
+    if(node->base.num_of_child < pos + 1) {
+        DbgPrint("remove_child16: node->base.num_of_child < pos + 1");
+        return;
+    }
+
     RtlMoveMemory(&node->keys[pos], &node->keys[pos + 1], node->base.num_of_child - 1 - pos);
     RtlMoveMemory(&node->children[pos], &node->children[pos + 1], (node->base.num_of_child - 1 - pos) * sizeof(VOID*));
     node->base.num_of_child--;
@@ -804,8 +887,16 @@ static VOID remove_child16(ART_NODE16* node, ART_NODE** ref, ART_NODE** leaf) {
 
 static VOID remove_child4(ART_NODE4* node, ART_NODE** ref, ART_NODE** leaf) {
     INT64 pos = leaf - node->children;
-    ASSERT(pos > 0 && pos < 2); // because of (pos + 1)
-    ASSERT(node->base.num_of_child >= pos + 1);
+    if (pos < 0 || pos > 2) {
+        DbgPrint("remove_child4: pos < 0 || pos > 2");
+        return;
+    }
+    
+    if (node->base.num_of_child < pos + 1) {
+        DbgPrint("remove_child4: pos < 0 || pos > 2");
+        return;
+    }
+
     RtlMoveMemory(&node->keys[pos], &node->keys[pos + 1], node->base.num_of_child - 1 - pos);
     RtlMoveMemory(&node->children[pos], &node->children[pos + 1], (node->base.num_of_child - 1 - pos) * sizeof(VOID*));
     node->base.num_of_child--;
@@ -915,6 +1006,114 @@ ULONG art_delete(ART_TREE* tree, PCUNICODE_STRING unicode_key) {
 
     destroy_utf8_key(key);
     return old;
+}
+
+static void recursive_delete_all(ART_TREE* tree, ART_NODE* node) {
+    if (!node) {
+        return;
+    }
+
+    if (IS_LEAF(node)) {
+        ART_LEAF* leaf = LEAF_RAW(node);
+        DbgPrint("Deleting leaf: %s\n", leaf->key);
+        free_node((ART_NODE*)leaf);
+        tree->size--;
+        return;
+    }
+
+    switch (node->type) {
+    case NODE4: {
+        ART_NODE4* node4 = (ART_NODE4*)node;
+        for (UINT8 i = 0; i < node4->base.num_of_child; i++) {
+            recursive_delete_all(tree, node4->children[i]);
+        }
+        break;
+    }
+    case NODE16: {
+        ART_NODE16* node16 = (ART_NODE16*)node;
+        for (UINT8 i = 0; i < node16->base.num_of_child; i++) {
+            recursive_delete_all(tree, node16->children[i]);
+        }
+        break;
+    }
+    case NODE48: {
+        ART_NODE48* node48 = (ART_NODE48*)node;
+        for (USHORT i = 0; i < 256; i++) {
+            UCHAR pos = node48->child_index[i];
+            if (pos) {
+                recursive_delete_all(tree, node48->children[pos - 1]);
+            }
+        }
+        break;
+    }
+    case NODE256: {
+        ART_NODE256* node256 = (ART_NODE256*)node;
+        for (USHORT i = 0; i < 256; i++) {
+            if (node256->children[i]) {
+                recursive_delete_all(tree, node256->children[i]);
+            }
+        }
+        break;
+    }
+    default:
+        DbgPrint("Unexpected node type!");
+    }
+
+    free_node(node);
+}
+
+void art_delete_all_child(ART_TREE* tree, PCUNICODE_STRING unicode_key) {
+    USHORT prefix_len;
+    PUCHAR prefix = unicode_to_utf8(unicode_key, &prefix_len);
+
+    ART_NODE** node_ref = &tree->root;
+    ART_NODE* node = tree->root;
+    ART_NODE* parent = NULL;
+    ART_NODE** parent_ref = NULL;
+    USHORT depth = 0;
+
+    while (node && !IS_LEAF(node)) {
+        if (node->prefix_length) {
+            USHORT matched = check_prefix(node, prefix, prefix_len, depth);
+            if (matched != min(MAX_PREFIX_LENGTH, node->prefix_length)) {
+                DbgPrint("Prefix mismatch during deletion, no nodes removed.\n");
+                return;
+            }
+            depth += node->prefix_length;
+        }
+
+        if (depth == prefix_len) {
+            DbgPrint("Deleting subtree under prefix.\n");
+            recursive_delete_all(tree, node);
+            remove_child(parent, parent_ref, prefix[depth - 1], node_ref);
+            return;
+        }
+
+        ART_NODE** child = find_child(node, prefix[depth]);
+        if (!child) {
+            DbgPrint("Prefix not found in tree.\n");
+            return;
+        }
+        parent = node;
+        parent_ref = node_ref;
+        node_ref = child;
+        node = *child;
+        depth++;
+    }
+
+    // If it is a leaf at exact prefix, delete it directly
+    if (node && IS_LEAF(node)) {
+        ART_LEAF* leaf = LEAF_RAW(node);
+        if (!leaf_matches(leaf, prefix, prefix_len, depth - 1)) {
+            DbgPrint("Deleting exact leaf at prefix: ");
+#if TEST
+            print_key(leaf->key, leaf->key_length);
+#endif
+            free_node((ART_NODE*)leaf);
+            remove_child(parent, parent_ref, prefix[depth - 1], node_ref);
+            tree->size--;
+        }
+    }
 }
 
 /** SEARCH Functions */

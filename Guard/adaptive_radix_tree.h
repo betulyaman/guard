@@ -1,6 +1,8 @@
 #ifndef ADAPTIVE_RADIX_TREE_H
 #define ADAPTIVE_RADIX_TREE_H
 
+#include "minifilter.h"
+
 #include <fltKernel.h>
 
 #define MAX_PREFIX_LENGTH 23 // \\device\\harddiskvolumeX\\
@@ -112,6 +114,11 @@ ULONG art_insert_no_replace(ART_TREE* tree, PCUNICODE_STRING unicode_key, ULONG 
 ULONG art_delete(ART_TREE* tree, PCUNICODE_STRING unicode_key);
 
 /**
+ * Deletes all keys (files, paths, or data) under a given prefix in the ART tree.
+ */
+void art_delete_all_child(ART_TREE* tree, PCUNICODE_STRING unicode_key);
+
+/**
  * Searches for a value in the ART tree.
  * Returns:
  * - POLICY_INVALID_ACCESS if the item was not found, 
@@ -141,6 +148,8 @@ int art_iter(ART_TREE* tree, art_callback callback, VOID* data);
  */
 int art_iter_prefix(ART_TREE* tree, CONST PUCHAR key, USHORT key_length, art_callback callback, VOID* data);
 
-void print(ART_NODE* node, USHORT depth);
+#if TEST
+void art_print_tree(ART_TREE* tree);
+#endif
 
 #endif // ADAPTIVE_RADIX_TREE_H

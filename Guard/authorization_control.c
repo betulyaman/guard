@@ -68,7 +68,7 @@ BOOLEAN is_access_allowed(PFLT_CALLBACK_DATA data, UINT32 access_right) {
     }
 
     case IRP_MJ_SET_INFORMATION:
-        return (BOOLEAN)(access_right & DELETE);
+        return (access_right & DELETE) != 0;
 
     default:
         return FALSE;

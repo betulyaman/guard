@@ -116,8 +116,7 @@ NTSTATUS message_notify_callback(
 
             DbgPrint("Connection authenticating.\n");
             return STATUS_SUCCESS;
-        }
-        break;
+        } break;
 
         case CONNECTION_AUTHENTICATING:
         {
@@ -148,8 +147,7 @@ NTSTATUS message_notify_callback(
                 return STATUS_ACCESS_DENIED;
             }
 
-        }
-        break;
+        } break;
 
         case CONNECTION_AUTHENTICATED:
         {
@@ -196,46 +194,87 @@ NTSTATUS message_notify_callback(
             }
 
 #if TEST
-            print(g_art_tree.root, 0);
+            art_print_tree(&g_art_tree);
 #endif
-            //DbgPrint("Connection established.\n");
-            //if ((input_buffer == NULL) ||
-            //    (input_buffer_length < (FIELD_OFFSET(USER_RESPONSE, operation_id) +
-            //        sizeof(USER_RESPONSE)))) {
-            //    return STATUS_INVALID_PARAMETER;
-            //}
+            g_context.connection_state = CONNECTION_CONNECTED;
+            return STATUS_SUCCESS;
+        } break;
 
-            //USER_RESPONSE reply;
-            //try {
-            //    reply.operation_id = ((USER_RESPONSE*)input_buffer)->operation_id;
-            //    reply.allow = ((USER_RESPONSE*)input_buffer)->allow;
-            //} except(exception_handler(GetExceptionInformation(), TRUE)) {
+        case CONNECTION_CONNECTED:
+        {
+            POLICY policy = { 0 };
 
-            //    return GetExceptionCode();
-            //}
+            try {
+                if (input_buffer_length < sizeof(POLICY)) {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                ProbeForRead(input_buffer, sizeof(POLICY), __alignof(POLICY));
+                RtlCopyMemory(&policy, input_buffer, sizeof(POLICY));
+            }
+            except(exception_handler(GetExceptionInformation(), TRUE)) {
+                return GetExceptionCode();
+            }
 
-            //PENDING_OPERATION* replied_operation = pending_operation_list_remove_by_id(reply.operation_id);
-            //if (replied_operation == NULL) {
-            //    // TODO replied operation doesnt exist in the pending list
-            //    return STATUS_UNSUCCESSFUL;
-            //}
+            UNICODE_STRING unicode_string;
+            policy.path[MAX_FILE_NAME_LENGTH - 1] = L'\0';
+            RtlInitUnicodeStringEx(&unicode_string, policy.path);
 
-            //if (reply.allow == TRUE) {
-            //    replied_operation->data->IoStatus.Status = STATUS_SUCCESS;
-            //    FltCompletePendedPreOperation(replied_operation->data, FLT_PREOP_SUCCESS_NO_CALLBACK, NULL);
-            //}
-            //else {
-            //    replied_operation->data->IoStatus.Status = STATUS_ACCESS_DENIED;
-            //    replied_operation->data->IoStatus.Information = 0;
-            //    FltCompletePendedPreOperation(replied_operation->data, FLT_PREOP_COMPLETE, NULL);
+            if (policy.status == POLICY_STATUS_ADD) {    
+                art_insert(&g_art_tree, &unicode_string, policy.access_mask);
+#if TEST
+                LOG_MSG("\n\r----ADD------\n\r");
+                art_print_tree(&g_art_tree);
+#endif
+            }
+            else if (policy.status == POLICY_STATUS_REMOVE) {
+                art_delete_all_child(&g_art_tree, &unicode_string);
+#if TEST
+                LOG_MSG("\n\r----REMOVE------\n\r");
+                art_print_tree(&g_art_tree);
+#endif
+            }
+            else
+            {
+                LOG_MSG("Unexpected policy status!");
+            }
 
-            //}
+           //DbgPrint("Connection established.\n");
+           //if ((input_buffer == NULL) ||
+           //    (input_buffer_length < (FIELD_OFFSET(USER_RESPONSE, operation_id) +
+           //        sizeof(USER_RESPONSE)))) {
+           //    return STATUS_INVALID_PARAMETER;
+           //}
 
-            //ExFreePoolWithTag(replied_operation, PENDING_OPERATION_TAG);
+           //USER_RESPONSE reply;
+           //try {
+           //    reply.operation_id = ((USER_RESPONSE*)input_buffer)->operation_id;
+           //    reply.allow = ((USER_RESPONSE*)input_buffer)->allow;
+           //} except(exception_handler(GetExceptionInformation(), TRUE)) {
+
+           //    return GetExceptionCode();
+           //}
+
+           //PENDING_OPERATION* replied_operation = pending_operation_list_remove_by_id(reply.operation_id);
+           //if (replied_operation == NULL) {
+           //    // TODO replied operation doesnt exist in the pending list
+           //    return STATUS_UNSUCCESSFUL;
+           //}
+
+           //if (reply.allow == TRUE) {
+           //    replied_operation->data->IoStatus.Status = STATUS_SUCCESS;
+           //    FltCompletePendedPreOperation(replied_operation->data, FLT_PREOP_SUCCESS_NO_CALLBACK, NULL);
+           //}
+           //else {
+           //    replied_operation->data->IoStatus.Status = STATUS_ACCESS_DENIED;
+           //    replied_operation->data->IoStatus.Information = 0;
+           //    FltCompletePendedPreOperation(replied_operation->data, FLT_PREOP_COMPLETE, NULL);
+
+           //}
+
+           //ExFreePoolWithTag(replied_operation, PENDING_OPERATION_TAG);
 
             return STATUS_SUCCESS;
-        }
-        break;
+        } break;
 
         default: 
             return STATUS_ACCESS_DENIED;
