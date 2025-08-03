@@ -10,27 +10,18 @@ ART_NODE* g_art_node;
 BOOLEAN is_access_allowed(PFLT_CALLBACK_DATA data, UINT32 access_right);
 ULONG get_access_rights(PUNICODE_STRING path);
 
-BOOLEAN is_authorized(_In_ PFLT_CALLBACK_DATA data) {
-    PFLT_FILE_NAME_INFORMATION name_info;
-    NTSTATUS status = FltGetFileNameInformation(data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_ALWAYS_ALLOW_CACHE_LOOKUP, &name_info);
-    if (!NT_SUCCESS(status)) {
-        return FALSE;
-    }
-
-    status = FltParseFileNameInformation(name_info);
-    if (!NT_SUCCESS(status)) {
-        FltReleaseFileNameInformation(name_info);
+BOOLEAN is_authorized(_In_ PFLT_CALLBACK_DATA data, _In_ PFLT_FILE_NAME_INFORMATION name_info)
+{
+    if (!name_info) {
         return FALSE;
     }
 
     ULONG access_right = get_access_rights(&name_info->Name);
-    FltReleaseFileNameInformation(name_info);
-    // There is no restriction for the path. 
-    // Let the operation.
+
+    // No policy defined, allow
     if (access_right == POLICY_NONE) {
         return TRUE;
     }
-
     return is_access_allowed(data, access_right);
 }
 

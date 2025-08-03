@@ -168,34 +168,9 @@ NTSTATUS message_notify_callback(
             RtlCopyMemory(g_context.agent_installation_path, user_initial_context.installation_path, sizeof(user_initial_context.installation_path));
             RtlCopyMemory(g_context.local_db_path, user_initial_context.local_db_path, sizeof(user_initial_context.local_db_path));
 
-            if (user_initial_context.policy_count == 0 ||
-                user_initial_context.policy_count > MAX_POLICY_COUNT) {
-                return STATUS_INVALID_PARAMETER;
-            }
-
-            // Initialize ART, add policies sent by user
+            // Initialize ART
             art_init_tree(&g_art_tree);
 
-            SIZE_T sizeof_policy_array = user_initial_context.policy_count * sizeof(POLICY);
-            try {
-                ProbeForRead(user_initial_context.policies, sizeof_policy_array, __alignof(POLICY));
-            }
-            except(exception_handler(GetExceptionInformation(), TRUE)) {
-                return GetExceptionCode();
-            }
-
-            for (UINT16 i = 0; i < user_initial_context.policy_count; ++i) {
-                POLICY policy;
-                UNICODE_STRING unicode_string;
-                RtlCopyMemory(&policy, &user_initial_context.policies[i], sizeof(POLICY));
-                policy.path[MAX_FILE_NAME_LENGTH - 1] = L'\0';
-                RtlInitUnicodeStringEx(&unicode_string, policy.path);
-                art_insert(&g_art_tree, &unicode_string, policy.access_mask);
-            }
-
-#if TEST
-            art_print_tree(&g_art_tree);
-#endif
             g_context.connection_state = CONNECTION_CONNECTED;
             return STATUS_SUCCESS;
         } break;

@@ -47,8 +47,6 @@ typedef struct {
 	LONG process_id;
 	WCHAR installation_path[MAX_FILE_NAME_LENGTH];
 	WCHAR local_db_path[MAX_FILE_NAME_LENGTH];
-	UINT16 policy_count;
-	POLICY* policies;
 } USER_INITIAL_CONTEXT;
 
 #endif //GUARD_COMMUNICATION_INFO_H

@@ -133,6 +133,7 @@ VOID art_print_tree(ART_TREE* t) {
     DbgPrint("=== End of Tree Dump ===\n\r");
 }
 #endif
+
 static inline PUCHAR unicode_to_utf8(PCUNICODE_STRING unicode, PUSHORT out_length) {
     NTSTATUS status;
 
