@@ -8,6 +8,10 @@
 
 #include <ntstrsafe.h>
 
+#if DEBUG
+#include "test_art.h"
+#endif
+
 NTSTATUS get_file_name(_Inout_ PFLT_CALLBACK_DATA data, _Out_ PUNICODE_STRING file_name);
 LONG exception_handler(_In_ PEXCEPTION_POINTERS ExceptionPointer, _In_ BOOLEAN AccessingUserBuffer);
 
@@ -190,10 +194,11 @@ NTSTATUS message_notify_callback(
                 RtlCopyMemory(&policy, &user_initial_context.policies[i], sizeof(POLICY));
                 policy.path[MAX_FILE_NAME_LENGTH - 1] = L'\0';
                 RtlInitUnicodeStringEx(&unicode_string, policy.path);
-                art_insert(&g_art_tree, &unicode_string, policy.access_mask);
+                art_insert(&g_art_tree, &unicode_string, policy.access_mask, NULL);
             }
 
-#if TEST
+#if DEBUG
+            art_validate_tree_quick(&g_art_tree);
             art_print_tree(&g_art_tree);
 #endif
             g_context.connection_state = CONNECTION_CONNECTED;
@@ -219,17 +224,21 @@ NTSTATUS message_notify_callback(
             policy.path[MAX_FILE_NAME_LENGTH - 1] = L'\0';
             RtlInitUnicodeStringEx(&unicode_string, policy.path);
 
-            if (policy.status == POLICY_STATUS_ADD) {    
-                art_insert(&g_art_tree, &unicode_string, policy.access_mask);
-#if TEST
-                LOG_MSG("\n\r----ADD------\n\r");
+            if (policy.status == POLICY_STATUS_ADD) {
+                DbgPrint("\n\rADD %ls\n\r", policy.path);
+                art_insert(&g_art_tree, &unicode_string, policy.access_mask, NULL);
+#if DEBUG
+                DbgPrint("\n\rNEW TREE: \n\r");
+                art_validate_tree_quick(&g_art_tree);
                 art_print_tree(&g_art_tree);
 #endif
             }
             else if (policy.status == POLICY_STATUS_REMOVE) {
-                art_delete_all_child(&g_art_tree, &unicode_string);
-#if TEST
-                LOG_MSG("\n\r----REMOVE------\n\r");
+                DbgPrint("\n\rREMOVE %ls\n\r", policy.path);
+                art_delete_subtree(&g_art_tree, &unicode_string);
+#if DEBUG
+                DbgPrint("\n\rNEW TREE: \n\r");
+                art_validate_tree_quick(&g_art_tree);
                 art_print_tree(&g_art_tree);
 #endif
             }
@@ -237,7 +246,7 @@ NTSTATUS message_notify_callback(
             {
                 LOG_MSG("Unexpected policy status!");
             }
-
+            DbgPrint("\n\n\n");
            //DbgPrint("Connection established.\n");
            //if ((input_buffer == NULL) ||
            //    (input_buffer_length < (FIELD_OFFSET(USER_RESPONSE, operation_id) +

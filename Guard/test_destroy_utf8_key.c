@@ -1,4 +1,5 @@
 ﻿#include "test_art.h"
+#include <ntstrsafe.h>
 
 #define NUM_SIMULATED_CONTEXTS 10
 
@@ -16,17 +17,13 @@ BOOLEAN test_null_pointer_handling()
     // Verifies the function safely handles NULL without calling ExFreePoolWithTag
     destroy_utf8_key(NULL);
 
-
     TEST_ASSERT(g_free_call_count == 0, "Should not call ExFreePoolWithTag for NULL pointer");
-
 
     // Test 1.2: Multiple NULL calls (should be safe)
     destroy_utf8_key(NULL);
     destroy_utf8_key(NULL);
 
-
     TEST_ASSERT(g_free_call_count == 0, "Multiple NULL calls should not trigger any frees");
-
 
     DbgPrint("[INFO] NULL pointer handling works correctly - no crashes or unexpected calls\n");
 
@@ -50,8 +47,8 @@ BOOLEAN test_valid_pointer_deallocation()
         return TRUE; // Skip this test if allocation fails
     }
 
-    // Fill with test data
-    strcpy((char*)test_key, "test_key");
+    // Fill with test data (kernel-safe)
+    RtlStringCbCopyA((char*)test_key, 16, "test_key");
 
     // Store the pointer for verification
     PUCHAR original_pointer = test_key;
@@ -59,11 +56,9 @@ BOOLEAN test_valid_pointer_deallocation()
     // Call destroy function
     destroy_utf8_key(test_key);
 
-
     TEST_ASSERT(g_free_call_count == 1, "Should call ExFreePoolWithTag exactly once");
     TEST_ASSERT(g_last_freed_pointer == original_pointer, "Should free the correct pointer");
     TEST_ASSERT(g_last_freed_tag == ART_TAG, "Should use the correct pool tag");
-
 
     DbgPrint("[INFO] Valid pointer deallocation completed successfully\n");
 
@@ -80,9 +75,7 @@ BOOLEAN test_valid_pointer_deallocation()
 
         destroy_utf8_key(large_key);
 
-
         TEST_ASSERT(g_free_call_count == 1, "Should free large buffer correctly");
-
 
         DbgPrint("[INFO] Large buffer deallocation completed successfully\n");
     }
@@ -106,7 +99,8 @@ BOOLEAN test_multiple_deallocation_safety()
     for (int i = 0; i < 5; i++) {
         keys[i] = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, 32, ART_TAG);
         if (keys[i]) {
-            sprintf((char*)keys[i], "test_key_%d", i);
+            // Use kernel-safe string formatting
+            RtlStringCbPrintfA((char*)keys[i], 32, "test_key_%d", i);
             allocated_count++;
         }
     }
@@ -124,10 +118,8 @@ BOOLEAN test_multiple_deallocation_safety()
         }
     }
 
-
     TEST_ASSERT(g_free_call_count == (ULONG)allocated_count,
         "Should call ExFreePoolWithTag for each valid pointer");
-
 
     DbgPrint("[INFO] Multiple deallocation completed - freed %d buffers\n", allocated_count);
 
@@ -148,9 +140,7 @@ BOOLEAN test_edge_case_pointers()
         tiny_key[0] = '\0';
         destroy_utf8_key(tiny_key);
 
-
         TEST_ASSERT(g_free_call_count == 1, "Should handle tiny allocation correctly");
-
 
         DbgPrint("[INFO] Tiny allocation (1 byte) handled correctly\n");
     }
@@ -162,9 +152,7 @@ BOOLEAN test_edge_case_pointers()
         empty_key[0] = '\0'; // Empty string
         destroy_utf8_key(empty_key);
 
-
         TEST_ASSERT(g_free_call_count == 1, "Should handle empty string pointer correctly");
-
 
         DbgPrint("[INFO] Empty string pointer handled correctly\n");
     }
@@ -195,18 +183,18 @@ BOOLEAN test_integration_with_unicode_to_utf8()
     }
 
     // Fill with simulated UTF-8 content (like what unicode_to_utf8 would produce)
-    strcpy((char*)simulated_utf8_key, "c:\\users\\testuser\\documents\\file.txt");
+    RtlStringCbCopyA((char*)simulated_utf8_key, 64, "c:\\users\\testuser\\documents\\file.txt");
 
     // Verify the content is as expected
-    TEST_ASSERT(strlen((char*)simulated_utf8_key) > 0, "Simulated key should have content");
+    size_t len = 0;
+    NTSTATUS lenStatus = RtlStringCbLengthA((char*)simulated_utf8_key, 64, &len);
+    TEST_ASSERT(NT_SUCCESS(lenStatus) && len > 0, "Simulated key should have content");
 
     // Now destroy it using our function
     destroy_utf8_key(simulated_utf8_key);
 
-
     TEST_ASSERT(g_free_call_count == 1, "Should properly clean up simulated UTF-8 key");
     TEST_ASSERT(g_last_freed_tag == ART_TAG, "Should use correct tag in cleanup");
-
 
     DbgPrint("[INFO] Integration test completed - typical usage pattern works\n");
 
@@ -228,10 +216,9 @@ BOOLEAN test_concurrent_usage_simulation()
 
     // Simulate multiple contexts allocating keys
     for (int i = 0; i < NUM_SIMULATED_CONTEXTS; i++) {
-        context_keys[i] = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED,
-            48, ART_TAG);
+        context_keys[i] = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, 48, ART_TAG);
         if (context_keys[i]) {
-            sprintf((char*)context_keys[i], "context_%d_key_data", i);
+            RtlStringCbPrintfA((char*)context_keys[i], 48, "context_%d_key_data", i);
             successful_allocations++;
         }
     }
@@ -244,10 +231,8 @@ BOOLEAN test_concurrent_usage_simulation()
         }
     }
 
-
     TEST_ASSERT(g_free_call_count == (ULONG)successful_allocations,
         "Should clean up all successfully allocated contexts");
-
 
     DbgPrint("[INFO] Concurrent usage simulation completed - %d contexts handled\n",
         successful_allocations);
@@ -309,11 +294,10 @@ BOOLEAN test_stress_allocation_deallocation()
 
     // Rapidly allocate and deallocate keys
     for (int i = 0; i < STRESS_ITERATIONS; i++) {
-        PUCHAR stress_key = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED,
-            64, ART_TAG);
+        PUCHAR stress_key = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, 64, ART_TAG);
         if (stress_key) {
             // Fill with test pattern
-            sprintf((char*)stress_key, "stress_test_key_%d_abcdefghijklmnop", i);
+            RtlStringCbPrintfA((char*)stress_key, 64, "stress_test_key_%d_abcdefghijklmnop", i);
 
             // Immediately destroy it
             destroy_utf8_key(stress_key);
@@ -326,10 +310,8 @@ BOOLEAN test_stress_allocation_deallocation()
         }
     }
 
-
     TEST_ASSERT(g_free_call_count == (ULONG)successful_cycles,
         "Should free all successfully allocated stress test keys");
-
 
     DbgPrint("[INFO] Stress test completed: %d/%d successful cycles\n",
         successful_cycles, STRESS_ITERATIONS);
@@ -349,7 +331,7 @@ BOOLEAN test_function_behavior_validation()
     PUCHAR test_key = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, 32, ART_TAG);
     if (test_key) {
         PUCHAR original_value = test_key;
-        strcpy((char*)test_key, "behavior_test");
+        RtlStringCbCopyA((char*)test_key, 32, "behavior_test");
 
         // The function takes the parameter by value, so it shouldn't modify
         // the original pointer variable (this is a conceptual test)
@@ -385,7 +367,7 @@ BOOLEAN test_logging_and_debugging()
     // Test 10.1: Verify logging for valid pointer
     PUCHAR log_test_key = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, 16, ART_TAG);
     if (log_test_key) {
-        strcpy((char*)log_test_key, "log_test");
+        RtlStringCbCopyA((char*)log_test_key, 16, "log_test");
 
         DbgPrint("[TEST] About to call destroy_utf8_key - expect LOG_MSG output\n");
         destroy_utf8_key(log_test_key);
@@ -401,7 +383,7 @@ BOOLEAN test_logging_and_debugging()
     for (int i = 0; i < 3; i++) {
         PUCHAR multi_log_key = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, 20, ART_TAG);
         if (multi_log_key) {
-            sprintf((char*)multi_log_key, "multi_%d", i);
+            RtlStringCbPrintfA((char*)multi_log_key, 20, "multi_%d", i);
             DbgPrint("[TEST] Destroying key %d\n", i);
             destroy_utf8_key(multi_log_key);
         }

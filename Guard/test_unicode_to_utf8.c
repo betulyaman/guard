@@ -18,6 +18,7 @@ BOOLEAN test_null_pointer_validation()
     WCHAR test_buffer[] = L"Test";
 
     create_unicode_string(&valid_unicode, test_buffer, 4);
+    DbgPrint("g_alloc_call_count after create_unicode_string: %lu\n", g_alloc_call_count);
 
     // Test 1.1: NULL unicode parameter
     // Ensures the function safely handles NULL input without crashing

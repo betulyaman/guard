@@ -1,5 +1,20 @@
 ﻿#include "test_art.h"
 
+// Mock fonksiyonlarının içinde “gerçek” API çağıracağız. Remap açık kalırsa Test_ExAllocatePool2  
+// içinden ExAllocatePool2 dediğimiz anda yine Test_ExAllocatePool2’ye gider → sonsuz döngü.
+#ifdef ExAllocatePool2
+#undef ExAllocatePool2
+#endif
+#ifdef ExFreePoolWithTag
+#undef ExFreePoolWithTag
+#endif
+#ifdef RtlDowncaseUnicodeString
+#undef RtlDowncaseUnicodeString
+#endif
+#ifdef RtlUnicodeToUTF8N
+#undef RtlUnicodeToUTF8N
+#endif
+
 extern NTSTATUS run_all_unicode_to_utf8_tests(void);
 extern NTSTATUS run_all_destroy_utf8_key_tests(void);
 extern NTSTATUS run_all_free_node_tests(void);
@@ -37,15 +52,15 @@ extern NTSTATUS run_all_art_delete_subtree_tests(void);
 extern NTSTATUS run_all_art_destroy_tree_tests(void);
 extern NTSTATUS run_all_art_search_tests(void);
 
+// ===== mock state =====
+ULONG  g_alloc_call_count = 0;
+ULONG  g_free_call_count = 0;
+ULONG  g_downcase_call_count = 0;
+ULONG  g_unicode_to_utf8_call_count = 0;
 
-ULONG g_alloc_call_count = 0;
-ULONG g_free_call_count = 0;
-ULONG g_downcase_call_count = 0;
-ULONG g_unicode_to_utf8_call_count = 0;
-
-PVOID g_last_allocated_pointer = NULL;
-ULONG g_last_allocated_size = 0;
-ULONG g_last_allocated_tag = 0;
+PVOID  g_last_allocated_pointer = NULL;
+SIZE_T g_last_allocated_size = 0;
+ULONG  g_last_allocated_tag = 0;
 
 PVOID g_last_freed_pointer = NULL;
 ULONG g_last_freed_tag = 0;
@@ -62,26 +77,25 @@ UCHAR g_last_freed_node_type_before_free = 0xEE;
 ULONG g_debugbreak_count = 0;
 USHORT g_last_freed_leaf_keylen_before_free = 0xEEEE;
 
+// ===== MOCK IMPLEMENTASYONLARI =====
 PVOID Test_ExAllocatePool2(ULONG PoolFlags, SIZE_T NumberOfBytes, ULONG Tag)
 {
     g_alloc_call_count++;
 
-    // Simulate allocation failure if requested
     if (g_simulate_alloc_failure && g_alloc_call_count > g_alloc_failure_after_count) {
         DbgPrint("[TEST MOCK] ExAllocatePool2 simulating failure (call #%lu)\n", g_alloc_call_count);
         return NULL;
     }
 
     // Store allocation details for verification
-    g_last_allocated_size = (ULONG)NumberOfBytes;
+    g_last_allocated_size = NumberOfBytes;
     g_last_allocated_tag = Tag;
 
-    // Actually allocate memory for testing
+    // // Actually allocate memory for testing (remap kapalı!)
     PVOID ptr = ExAllocatePool2(PoolFlags, NumberOfBytes, Tag);
     g_last_allocated_pointer = ptr;
 
-    DbgPrint("[TEST MOCK] ExAllocatePool2 called: Size=%lu, Tag=0x%x, Result=%p\n",
-        (ULONG)NumberOfBytes, Tag, ptr);
+    DbgPrint("[TEST MOCK] ExAllocatePool2 called: Size=%Iu, Tag=0x%08X, Result=%p\n", (size_t)NumberOfBytes, Tag, ptr);
 
     return ptr;
 }
@@ -100,7 +114,7 @@ VOID Test_ExFreePoolWithTag(PVOID P, ULONG Tag)
         __except (EXCEPTION_EXECUTE_HANDLER) {
             g_last_freed_node_type_before_free = 0xEE;
         }
-        
+
         __try {
             // NEW: capture leaf->key_length
             g_last_freed_leaf_keylen_before_free = ((ART_LEAF*)P)->key_length;
@@ -110,7 +124,7 @@ VOID Test_ExFreePoolWithTag(PVOID P, ULONG Tag)
         }
     }
 
-    DbgPrint("[TEST MOCK] ExFreePoolWithTag called with P=%p, Tag=0x%x\n", P, Tag);
+    DbgPrint("[TEST MOCK] ExFreePoolWithTag called with P=%p, Tag=0x%08X\n", P, Tag);
 
     // Actually free the memory
     if (P) {
@@ -123,10 +137,8 @@ NTSTATUS Test_RtlDowncaseUnicodeString(PUNICODE_STRING DestinationString,
     BOOLEAN AllocateDestinationString)
 {
     g_downcase_call_count++;
-
     DbgPrint("[TEST MOCK] RtlDowncaseUnicodeString called (call #%lu)\n", g_downcase_call_count);
 
-    // Return mock status if configured
     if (!NT_SUCCESS(g_mock_downcase_return)) {
         DbgPrint("[TEST MOCK] RtlDowncaseUnicodeString returning mock failure: 0x%x\n",
             g_mock_downcase_return);
@@ -144,10 +156,8 @@ NTSTATUS Test_RtlUnicodeToUTF8N(PCHAR UTF8StringDestination,
     ULONG UnicodeStringByteCount)
 {
     g_unicode_to_utf8_call_count++;
-
     DbgPrint("[TEST MOCK] RtlUnicodeToUTF8N called (call #%lu)\n", g_unicode_to_utf8_call_count);
 
-    // Return mock status if configured
     if (!NT_SUCCESS(g_mock_unicode_to_utf8_return)) {
         DbgPrint("[TEST MOCK] RtlUnicodeToUTF8N returning mock failure: 0x%x\n",
             g_mock_unicode_to_utf8_return);
@@ -155,13 +165,15 @@ NTSTATUS Test_RtlUnicodeToUTF8N(PCHAR UTF8StringDestination,
     }
 
     // Call real function
-    return RtlUnicodeToUTF8N(UTF8StringDestination, UTF8StringMaxByteCount,
-        UTF8StringActualByteCount, UnicodeStringSource,
+    return RtlUnicodeToUTF8N(UTF8StringDestination,
+        UTF8StringMaxByteCount,
+        UTF8StringActualByteCount,
+        UnicodeStringSource,
         UnicodeStringByteCount);
 }
 
 // Helper function to reset mock state
-void reset_mock_state()
+void reset_mock_state(void)
 {
     g_alloc_call_count = 0;
     g_free_call_count = 0;
@@ -194,16 +206,16 @@ void configure_mock_failure(NTSTATUS downcase_status, NTSTATUS utf8_status, BOOL
     g_alloc_failure_after_count = alloc_fail_after;
 }
 
-VOID Test_DebugBreak(VOID) 
-{ 
-    g_debugbreak_count++; 
-    DbgPrint("[TEST MOCK] __debugbreak() hit\n"); 
+VOID Test_DebugBreak(VOID)
+{
+    g_debugbreak_count++;
+    DbgPrint("[TEST MOCK] __debugbreak() hit\n");
 }
 
 // Helper function to cleanup Unicode string
 void cleanup_unicode_string(UNICODE_STRING* str)
 {
-    if (str->Buffer) {
+    if (str && str->Buffer) {
         ExFreePoolWithTag(str->Buffer, ART_TAG);
         str->Buffer = NULL;
         str->Length = 0;
@@ -211,13 +223,15 @@ void cleanup_unicode_string(UNICODE_STRING* str)
     }
 }
 
-// Helper function to create Unicode string from wide string
 NTSTATUS create_unicode_string(UNICODE_STRING* dest, const WCHAR* source, ULONG length_chars)
 {
+    if (!dest) 
+        return STATUS_INVALID_PARAMETER;
+
     dest->Length = (USHORT)(length_chars * sizeof(WCHAR));
     dest->MaximumLength = dest->Length + sizeof(WCHAR);
-    dest->Buffer = (PWCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, dest->MaximumLength, ART_TAG);
 
+    dest->Buffer = (PWCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, dest->MaximumLength, ART_TAG);
     if (!dest->Buffer) {
         return STATUS_NO_MEMORY;
     }
@@ -231,6 +245,7 @@ NTSTATUS create_unicode_string(UNICODE_STRING* dest, const WCHAR* source, ULONG 
 }
 
 // ===== helpers (no CRT) =====
+
 ART_NODE* t_alloc_header_only(NODE_TYPE t)
 {
     ART_NODE* n = (ART_NODE*)ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ART_NODE), ART_TAG);
@@ -241,6 +256,7 @@ ART_NODE* t_alloc_header_only(NODE_TYPE t)
     n->prefix_length = 0;
     return n;
 }
+
 ART_NODE4* t_alloc_node4(void)
 {
     ART_NODE4* n = (ART_NODE4*)ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ART_NODE4), ART_TAG);
@@ -249,6 +265,7 @@ ART_NODE4* t_alloc_node4(void)
     n->base.type = NODE4;
     return n;
 }
+
 ART_NODE16* t_alloc_node16(void)
 {
     ART_NODE16* n = (ART_NODE16*)ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ART_NODE16), ART_TAG);
@@ -257,6 +274,7 @@ ART_NODE16* t_alloc_node16(void)
     n->base.type = NODE16;
     return n;
 }
+
 ART_NODE48* t_alloc_node48(void)
 {
     ART_NODE48* n = (ART_NODE48*)ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ART_NODE48), ART_TAG);
@@ -265,6 +283,7 @@ ART_NODE48* t_alloc_node48(void)
     n->base.type = NODE48;
     return n;
 }
+
 ART_NODE256* t_alloc_node256(void)
 {
     ART_NODE256* n = (ART_NODE256*)ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ART_NODE256), ART_TAG);
@@ -273,6 +292,7 @@ ART_NODE256* t_alloc_node256(void)
     n->base.type = NODE256;
     return n;
 }
+
 ART_NODE* t_alloc_dummy_child(NODE_TYPE t)
 {
     ART_NODE* n = (ART_NODE*)ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ART_NODE), ART_TAG);
@@ -281,12 +301,15 @@ ART_NODE* t_alloc_dummy_child(NODE_TYPE t)
     n->type = t;
     return n;
 }
-ART_NODE* test_alloc_node_base(void) {
-    ART_NODE* p = (ART_NODE*)ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ART_NODE), ART_TAG);  
+
+ART_NODE* test_alloc_node_base(void)
+{
+    ART_NODE* p = (ART_NODE*)ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ART_NODE), ART_TAG);
     if (p) 
-        RtlZeroMemory(p, sizeof(*p));  
-    return p; 
+        RtlZeroMemory(p, sizeof(*p));
+    return p;
 }
+
 ART_LEAF* test_alloc_leaf(USHORT key_len, UCHAR start_val)
 {
     SIZE_T sz = sizeof(ART_LEAF) + key_len;
@@ -300,6 +323,7 @@ ART_LEAF* test_alloc_leaf(USHORT key_len, UCHAR start_val)
     }
     return lf;
 }
+
 PUCHAR t_alloc_key(USHORT len, UCHAR start)
 {
     if (!len) return NULL;
@@ -309,7 +333,10 @@ PUCHAR t_alloc_key(USHORT len, UCHAR start)
     return b;
 }
 
-VOID t_free(void* p) { if (p) ExFreePoolWithTag(p, ART_TAG); }
+VOID t_free(void* p)
+{
+    if (p) ExFreePoolWithTag(p, ART_TAG);
+}
 
 VOID test_free_leaf(ART_LEAF* lf)
 {
@@ -347,6 +374,7 @@ VOID test_free_node_any(ART_NODE* node)
 }
 
 // Seed helpers
+
 BOOLEAN t_seed_node4_sorted(ART_NODE4* n, USHORT cnt, UCHAR start)
 {
     if (!n || cnt > 4) return FALSE;
@@ -363,6 +391,7 @@ BOOLEAN t_seed_node4_sorted(ART_NODE4* n, USHORT cnt, UCHAR start)
     }
     return TRUE;
 }
+
 BOOLEAN t_seed_node16_sorted(ART_NODE16* n, USHORT cnt, UCHAR start)
 {
     if (!n || cnt > 16) return FALSE;
@@ -379,21 +408,25 @@ BOOLEAN t_seed_node16_sorted(ART_NODE16* n, USHORT cnt, UCHAR start)
     }
     return TRUE;
 }
+
 VOID t_free_children4(ART_NODE4* n)
 {
     if (!n) return;
     for (USHORT i = 0; i < 4; i++) { if (n->children[i]) t_free(n->children[i]); n->children[i] = NULL; }
 }
+
 VOID t_free_children16(ART_NODE16* n)
 {
     if (!n) return;
     for (USHORT i = 0; i < 16; i++) { if (n->children[i]) t_free(n->children[i]); n->children[i] = NULL; }
 }
+
 VOID t_free_children48(ART_NODE48* n)
 {
     if (!n) return;
     for (USHORT i = 0; i < 48; i++) { if (n->children[i]) t_free(n->children[i]); n->children[i] = NULL; }
 }
+
 VOID t_free_children256(ART_NODE256* n)
 {
     if (!n) return;
@@ -422,7 +455,6 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
     BOOLEAN all_ok = TRUE;
     NTSTATUS st;
 
-    // ---- call every suite; keep going even if one fails ----
     st = run_all_unicode_to_utf8_tests();            if (!NT_SUCCESS(st)) all_ok = FALSE;
     st = run_all_destroy_utf8_key_tests();           if (!NT_SUCCESS(st)) all_ok = FALSE;
     st = run_all_free_node_tests();                  if (!NT_SUCCESS(st)) all_ok = FALSE;
@@ -469,9 +501,5 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
     }
     DbgPrint("=================================================\n\n");
 
-    // Typically return success so the driver loads even if tests failed,
-    // letting you inspect logs and unload manually.
     return STATUS_SUCCESS;
 }
-
-

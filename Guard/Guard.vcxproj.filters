@@ -20,6 +20,9 @@
     <Filter Include="Tests">
       <UniqueIdentifier>{79033456-83b6-4f68-a120-fd4647640fb5}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Tests\ART">
+      <UniqueIdentifier>{46c14daf-7f79-4e2f-b8c1-de127626701e}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <Inf Include="Guard.inf">
@@ -54,8 +57,119 @@
     <ClCompile Include="security.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="TEST_adaptive_radix_tree.c">
-      <Filter>Tests</Filter>
+    <ClCompile Include="debug_print.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_unicode_to_utf8.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_destroy_utf8_key.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_free_leaf.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_free_node.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_art.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_art_init_tree.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_art_create_node.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_leaf_matches.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_ctz.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_find_child.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_copy_header.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_check_prefix.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_minimum.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_maximum.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_make_leaf.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_longest_common_prefix.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_prefix_mismatch.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_add_child.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_add_child4.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_add_child16.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_add_child48.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_add_child256.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_art_insert.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_art_insert_no_replace.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_recursive_insert.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_remove_child4.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_remove_child16.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_remove_child48.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_remove_child256.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_remove_child.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_art_delete.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_art_delete_subtree.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_art_destroy_tree.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_art_search.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_recursive_delete.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_recursive_delete_all_internal.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_recursive_delete_internal.c">
+      <Filter>Tests\ART</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -74,9 +188,6 @@
     <ClInclude Include="preoperation_callbacks.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\inc\communication_info.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="pending_operation_list.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -92,8 +203,11 @@
     <ClInclude Include="security.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="TEST_adaptive_radix_tree.h">
-      <Filter>Tests</Filter>
+    <ClInclude Include="common_test_header.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="test_art.h">
+      <Filter>Tests\ART</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

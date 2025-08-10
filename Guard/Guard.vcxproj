@@ -119,18 +119,55 @@
   <ItemGroup>
     <ClCompile Include="authorization_control.c" />
     <ClCompile Include="communication.c" />
+    <ClCompile Include="debug_print.c" />
     <ClCompile Include="global_context.c" />
     <ClCompile Include="minifilter.c" />
     <ClCompile Include="pending_operation_list.c" />
     <ClCompile Include="preoperation_callbacks.c" />
     <ClCompile Include="adaptive_radix_tree.c" />
     <ClCompile Include="security.c" />
-    <ClCompile Include="TEST_adaptive_radix_tree.c" />
+    <ClCompile Include="test_add_child.c" />
+    <ClCompile Include="test_add_child16.c" />
+    <ClCompile Include="test_add_child256.c" />
+    <ClCompile Include="test_add_child4.c" />
+    <ClCompile Include="test_add_child48.c" />
+    <ClCompile Include="test_art.c" />
+    <ClCompile Include="test_art_create_node.c" />
+    <ClCompile Include="test_art_delete.c" />
+    <ClCompile Include="test_art_delete_subtree.c" />
+    <ClCompile Include="test_art_destroy_tree.c" />
+    <ClCompile Include="test_art_init_tree.c" />
+    <ClCompile Include="test_art_insert.c" />
+    <ClCompile Include="test_art_insert_no_replace.c" />
+    <ClCompile Include="test_art_search.c" />
+    <ClCompile Include="test_check_prefix.c" />
+    <ClCompile Include="test_copy_header.c" />
+    <ClCompile Include="test_ctz.c" />
+    <ClCompile Include="test_destroy_utf8_key.c" />
+    <ClCompile Include="test_find_child.c" />
+    <ClCompile Include="test_free_leaf.c" />
+    <ClCompile Include="test_free_node.c" />
+    <ClCompile Include="test_leaf_matches.c" />
+    <ClCompile Include="test_longest_common_prefix.c" />
+    <ClCompile Include="test_make_leaf.c" />
+    <ClCompile Include="test_maximum.c" />
+    <ClCompile Include="test_minimum.c" />
+    <ClCompile Include="test_prefix_mismatch.c" />
+    <ClCompile Include="test_recursive_delete.c" />
+    <ClCompile Include="test_recursive_delete_all_internal.c" />
+    <ClCompile Include="test_recursive_delete_internal.c" />
+    <ClCompile Include="test_recursive_insert.c" />
+    <ClCompile Include="test_remove_child.c" />
+    <ClCompile Include="test_remove_child16.c" />
+    <ClCompile Include="test_remove_child256.c" />
+    <ClCompile Include="test_remove_child4.c" />
+    <ClCompile Include="test_remove_child48.c" />
+    <ClCompile Include="test_unicode_to_utf8.c" />
     <ClCompile Include="windows_service_controls.c" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\inc\communication_info.h" />
     <ClInclude Include="authorization_control.h" />
+    <ClInclude Include="common_test_header.h" />
     <ClInclude Include="communication.h" />
     <ClInclude Include="global_context.h" />
     <ClInclude Include="log.h" />
@@ -139,7 +176,7 @@
     <ClInclude Include="pending_operation_list.h" />
     <ClInclude Include="adaptive_radix_tree.h" />
     <ClInclude Include="security.h" />
-    <ClInclude Include="TEST_adaptive_radix_tree.h" />
+    <ClInclude Include="test_art.h" />
     <ClInclude Include="windows_service_controls.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

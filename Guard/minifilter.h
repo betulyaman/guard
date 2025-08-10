@@ -1,7 +1,17 @@
 #ifndef GUARD_MINIFILTER_H
 #define GUARD_MINIFILTER_H
 
-#define TEST 1
+#define DEBUG 1
+#define UNIT_TEST 1
+
+#if DEBUG
+#define LEAF_FREED_MAGIC ((USHORT)0xDEAD)
+#define STATIC 
+#define INLINE
+#else
+#define STATIC static
+#define INLINE inline
+#endif
 
 typedef enum {
 	CONNECTION_CLOSED = 0,
