@@ -1,0 +1,398 @@
+﻿#include "test_art.h"
+
+// Function under test
+STATIC NTSTATUS remove_child16(_In_ ART_NODE16* node,
+    _Inout_ ART_NODE** ref,
+    _In_ ART_NODE** leaf);
+
+// We assume the helpers/types/macros from your harness are available:
+// - art_create_node, copy_header, free_node, make_leaf, free_leaf
+// - IS_LEAF, LEAF_RAW, SET_LEAF
+// - reset_mock_state(), g_free_call_count, g_last_freed_tag
+// - TEST_* macros
+
+// ---------------- tiny local helpers (no CRT) ----------------
+static VOID t_zero(void* p, SIZE_T n) { RtlZeroMemory(p, n); }
+
+static ART_NODE16* t_make_node16_with_children_count(USHORT count,
+    UCHAR first_key,
+    ART_NODE** out_ref_base,
+    ART_LEAF** out_leaves,
+    USHORT out_leaves_cap)
+{
+    // Build NODE16 with "count" children on ascending keys:
+    // keys[i] = first_key + i, children[i] = leaf("k", key)
+    ART_NODE16* n16 = (ART_NODE16*)art_create_node(NODE16);
+    if (!n16) return NULL;
+
+    n16->base.type = NODE16;
+    n16->base.num_of_child = 0;
+    t_zero(n16->keys, sizeof(n16->keys));
+    t_zero(n16->children, sizeof(n16->children));
+
+    for (USHORT i = 0; i < count && i < 16; i++) {
+        UCHAR k = (UCHAR)(first_key + i);
+        UCHAR kbuf[2] = { 'k', k };
+        ART_LEAF* lf = make_leaf(kbuf, 2, /*value*/ k);
+        if (!lf) {
+            // best-effort cleanup
+            for (USHORT j = 0; j < 16; j++) {
+                ART_NODE* ch = n16->children[j];
+                if (ch && IS_LEAF(ch)) {
+                    ART_LEAF* l2 = LEAF_RAW(ch);
+                    free_leaf(&l2);
+                    n16->children[j] = NULL;
+                }
+            }
+            free_node((ART_NODE**)&n16);
+            return NULL;
+        }
+        if (out_leaves && i < out_leaves_cap) out_leaves[i] = lf;
+
+        n16->keys[i] = k;
+        n16->children[i] = (ART_NODE*)SET_LEAF(lf);
+        n16->base.num_of_child++;
+    }
+
+    if (out_ref_base) *out_ref_base = (ART_NODE*)n16;
+    return n16;
+}
+
+static VOID t_free_node16_and_leaf_children(ART_NODE16** pn16)
+{
+    if (!pn16 || !*pn16) return;
+    ART_NODE16* n16 = *pn16;
+    for (USHORT i = 0; i < 16; i++) {
+        ART_NODE* ch = n16->children[i];
+        if (ch && IS_LEAF(ch)) {
+            ART_LEAF* lf = LEAF_RAW(ch);
+            free_leaf(&lf);
+            n16->children[i] = NULL;
+        }
+    }
+    free_node((ART_NODE**)pn16); // sets *pn16 = NULL
+}
+
+static VOID t_free_node4_and_leaf_children(ART_NODE4** pn4)
+{
+    if (!pn4 || !*pn4) return;
+    ART_NODE4* n4 = *pn4;
+    for (USHORT i = 0; i < 4; i++) {
+        ART_NODE* ch = n4->children[i];
+        if (ch && IS_LEAF(ch)) {
+            ART_LEAF* lf = LEAF_RAW(ch);
+            free_leaf(&lf);
+            n4->children[i] = NULL;
+        }
+    }
+    free_node((ART_NODE**)pn4);
+}
+
+// After a removal-without-resize, free all remaining leaf children plus the removed one
+static VOID t_cleanup_after_remove_no_resize(ART_NODE16** pn16,
+    ART_LEAF* removed_leaf_optional)
+{
+    if (removed_leaf_optional) {
+        free_leaf(&removed_leaf_optional);
+    }
+    t_free_node16_and_leaf_children(pn16);
+}
+
+// ===============================================================
+// Test 1: Guard checks
+// ===============================================================
+BOOLEAN test_remove_child16_guards()
+{
+    TEST_START("remove_child16: guard checks");
+
+    reset_mock_state();
+#pragma warning(push)
+#pragma warning(disable: 6387)
+    NTSTATUS st = remove_child16(NULL, NULL, NULL);
+#pragma warning(pop)
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "1.1: NULL node/ref/leaf rejected");
+
+    ART_NODE16* n16 = (ART_NODE16*)art_create_node(NODE16);
+    TEST_ASSERT(n16 != NULL, "1-pre: created NODE16");
+    n16->base.type = NODE16;
+
+    ART_NODE* ref = (ART_NODE*)n16;
+    st = remove_child16(n16, NULL, &n16->children[0]);
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "1.2: NULL ref rejected");
+
+    st = remove_child16(n16, &ref, NULL);
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "1.3: NULL leaf rejected");
+
+    free_node((ART_NODE**)&n16);
+
+    TEST_END("remove_child16: guard checks");
+    return TRUE;
+}
+
+// ===============================================================
+// Test 2: Invalid position
+//   - leaf pointer outside children array , STATUS_INVALID_PARAMETER
+//   - leaf pointer inside array but >= num_of_child , STATUS_INVALID_PARAMETER
+// ===============================================================
+BOOLEAN test_remove_child16_invalid_position()
+{
+    TEST_START("remove_child16: invalid position");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_NODE16* n16 = t_make_node16_with_children_count(/*count*/ 5, /*first_key*/ 10, &ref, NULL, 0);
+    TEST_ASSERT(n16 != NULL, "2-pre: created NODE16(5)");
+
+    // 2.1: pointer outside the array (one-past-the-end pointer; never dereferenced)
+    ART_NODE** bad_leaf_ptr = &n16->children[ARRAYSIZE(n16->children)];
+    NTSTATUS st = remove_child16(n16, &ref, bad_leaf_ptr);
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "2.1: leaf ptr outside children array , invalid parameter");
+
+    // 2.2: pointer inside array but pos >= num_of_child (pos=10, count=5)
+    ART_NODE** inside_ptr = &n16->children[10];   // within array, but index 10
+    st = remove_child16(n16, &ref, inside_ptr);
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "2.2: pos >= child count , invalid parameter");
+
+    t_free_node16_and_leaf_children(&n16);
+
+    TEST_END("remove_child16: invalid position");
+    return TRUE;
+}
+
+
+// ===============================================================
+// Test 3: Child at position is NULL , STATUS_NOT_FOUND
+// ===============================================================
+BOOLEAN test_remove_child16_child_null()
+{
+    TEST_START("remove_child16: mapped but child NULL");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_NODE16* n16 = t_make_node16_with_children_count(/*count*/ 6, /*first_key*/ 30, &ref, NULL, 0);
+    TEST_ASSERT(n16 != NULL, "3-pre: created NODE16(6)");
+
+    // Invalidate a slot that would be in-range
+    n16->children[2] = NULL;
+
+    NTSTATUS st = remove_child16(n16, &ref, &n16->children[2]);
+    TEST_ASSERT(st == STATUS_NOT_FOUND, "3.1: returns STATUS_NOT_FOUND");
+
+    t_free_node16_and_leaf_children(&n16);
+
+    TEST_END("remove_child16: mapped but child NULL");
+    return TRUE;
+}
+
+// ===============================================================
+// Test 4: Remove from middle (no resize) — verify shift and count
+// ===============================================================
+BOOLEAN test_remove_child16_remove_middle_no_resize()
+{
+    TEST_START("remove_child16: remove middle (no resize)");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_LEAF* leaves[16]; t_zero(leaves, sizeof(leaves));
+    ART_NODE16* n16 = t_make_node16_with_children_count(/*count*/ 6, /*first_key*/ 40, &ref, leaves, RTL_NUMBER_OF(leaves));
+    TEST_ASSERT(n16 != NULL, "4-pre: created NODE16(6)");
+
+    // Remove position 2 (third element)
+    USHORT before_count = n16->base.num_of_child; // 6
+    ART_NODE* removed_child = n16->children[2];
+
+    NTSTATUS st = remove_child16(n16, &ref, &n16->children[2]);
+    TEST_ASSERT(NT_SUCCESS(st), "4.1: call succeeds");
+    TEST_ASSERT(((ART_NODE16*)ref) == n16, "4.2: no resize, ref unchanged");
+    TEST_ASSERT(n16->base.num_of_child == before_count - 1, "4.3: count decremented to 5");
+
+    // Verify shift of keys
+    // Pre: keys = 40,41,42,43,44,45
+    // After removing idx=2 (key 42) , keys expected: 40,41,43,44,45
+    TEST_ASSERT(n16->keys[0] == 40, "4.4: key[0] ok");
+    TEST_ASSERT(n16->keys[1] == 41, "4.5: key[1] ok");
+    TEST_ASSERT(n16->keys[2] == 43, "4.6: key[2] shifted");
+    TEST_ASSERT(n16->keys[3] == 44, "4.7: key[3] shifted");
+    TEST_ASSERT(n16->keys[4] == 45, "4.8: key[4] shifted");
+
+    // Verify child shift (positions 2.. end moved left)
+    TEST_ASSERT(n16->children[2] != NULL, "4.9: child[2] now previous child[3]");
+    TEST_ASSERT(n16->children[3] != NULL, "4.10: child[3] now previous child[4]");
+    TEST_ASSERT(n16->children[4] != NULL, "4.11: child[4] now previous child[5]");
+
+    // Cleanup: free removed leaf and remaining node/children
+    ART_LEAF* removed_leaf = NULL;
+    if (removed_child && IS_LEAF(removed_child)) {
+        removed_leaf = LEAF_RAW(removed_child);
+    }
+    t_cleanup_after_remove_no_resize(&n16, removed_leaf);
+
+    TEST_END("remove_child16: remove middle (no resize)");
+    return TRUE;
+}
+
+// ===============================================================
+// Test 5: Remove first (no resize) — verify shift
+// ===============================================================
+BOOLEAN test_remove_child16_remove_first_no_resize()
+{
+    TEST_START("remove_child16: remove first (no resize)");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_LEAF* leaves[16]; t_zero(leaves, sizeof(leaves));
+    ART_NODE16* n16 = t_make_node16_with_children_count(/*count*/ 5, /*first_key*/ 60, &ref, leaves, RTL_NUMBER_OF(leaves));
+    TEST_ASSERT(n16 != NULL, "5-pre: created NODE16(5)");
+
+    ART_NODE* removed_child = n16->children[0];
+
+    NTSTATUS st = remove_child16(n16, &ref, &n16->children[0]);
+    TEST_ASSERT(NT_SUCCESS(st), "5.1: success");
+    TEST_ASSERT(n16->base.num_of_child == 4, "5.2: count decremented to 4");
+
+    // keys become 61,62,63,64
+    TEST_ASSERT(n16->keys[0] == 61 && n16->keys[3] == 64, "5.3: keys shifted left");
+
+    ART_LEAF* removed_leaf = IS_LEAF(removed_child) ? LEAF_RAW(removed_child) : NULL;
+    t_cleanup_after_remove_no_resize(&n16, removed_leaf);
+
+    TEST_END("remove_child16: remove first (no resize)");
+    return TRUE;
+}
+
+// ===============================================================
+// Test 6: Remove last (no resize) — verify tail cut
+// ===============================================================
+BOOLEAN test_remove_child16_remove_last_no_resize()
+{
+    TEST_START("remove_child16: remove last (no resize)");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_LEAF* leaves[16]; t_zero(leaves, sizeof(leaves));
+    ART_NODE16* n16 = t_make_node16_with_children_count(/*count*/ 5, /*first_key*/ 80, &ref, leaves, RTL_NUMBER_OF(leaves));
+    TEST_ASSERT(n16 != NULL, "6-pre: created NODE16(5)");
+
+    ART_NODE* removed_child = n16->children[4];
+
+    NTSTATUS st = remove_child16(n16, &ref, &n16->children[4]);
+    TEST_ASSERT(NT_SUCCESS(st), "6.1: success");
+    TEST_ASSERT(n16->base.num_of_child == 4, "6.2: count decremented to 4");
+
+    // keys remain 80..83
+    TEST_ASSERT(n16->keys[0] == 80 && n16->keys[3] == 83, "6.3: tail cut ok (no mid shift)");
+
+    ART_LEAF* removed_leaf = IS_LEAF(removed_child) ? LEAF_RAW(removed_child) : NULL;
+    t_cleanup_after_remove_no_resize(&n16, removed_leaf);
+
+    TEST_END("remove_child16: remove last (no resize)");
+    return TRUE;
+}
+
+// ===============================================================
+// Test 7: Threshold , resize to NODE4
+// Start with 4 children; remove one , 3 , resize. Validate:
+//  - ref becomes NODE4
+//  - num_of_child == 3
+//  - keys/children copied in order
+//  - old NODE16 freed
+// ===============================================================
+BOOLEAN test_remove_child16_resize_to_node4()
+{
+    TEST_START("remove_child16: resize to NODE4 on threshold");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_LEAF* leaves[16]; t_zero(leaves, sizeof(leaves));
+    ART_NODE16* n16 = t_make_node16_with_children_count(/*count*/ 4, /*first_key*/ 100, &ref, leaves, RTL_NUMBER_OF(leaves));
+    TEST_ASSERT(n16 != NULL, "7-pre: created NODE16(4)");
+
+    ULONG frees_before = g_free_call_count;
+
+    // Remove second item (pos=1), remaining should be 3 , resize path
+    ART_NODE* removed_child = n16->children[1];
+    NTSTATUS st = remove_child16(n16, &ref, &n16->children[1]);
+    TEST_ASSERT(NT_SUCCESS(st), "7.1: success");
+
+    // After resize, ref should be a NODE4
+    ART_NODE4* n4 = (ART_NODE4*)ref;
+    TEST_ASSERT(n4 != NULL && n4->base.type == NODE4, "7.2: ref updated to NODE4");
+    TEST_ASSERT(n4->base.num_of_child == 3, "7.3: new node child count = 3");
+
+    // keys must be ascending and equal to original (except removed 101)
+    TEST_ASSERT(n4->keys[0] == 100, "7.4: first key ok");
+    TEST_ASSERT(n4->keys[1] == 102, "7.5: second key ok (101 removed)");
+    TEST_ASSERT(n4->keys[2] == 103, "7.6: third key ok");
+
+    // Children should be non-NULL
+    TEST_ASSERT(n4->children[0] != NULL &&
+        n4->children[1] != NULL &&
+        n4->children[2] != NULL, "7.7: children present");
+
+    // Old NODE16 must be freed once
+    TEST_ASSERT(g_free_call_count == frees_before + 1, "7.8: old NODE16 freed once");
+    TEST_ASSERT(g_last_freed_tag == ART_TAG, "7.9: freed with ART_TAG");
+
+    // Cleanup: free remaining leaves from NODE4, then node4 itself, plus the removed leaf
+    if (removed_child && IS_LEAF(removed_child)) {
+        ART_LEAF* rem = LEAF_RAW(removed_child);
+        free_leaf(&rem);
+    }
+    t_free_node4_and_leaf_children(&n4);
+
+    TEST_END("remove_child16: resize to NODE4 on threshold");
+    return TRUE;
+}
+
+// ===============================================================
+// Test 8: FI-only branches (documented)
+//  - art_create_node(NODE4) failure , STATUS_INSUFFICIENT_RESOURCES
+//  - copy_header failure , return error and free new_node
+// These need fault injection or indirection via function pointers.
+// ===============================================================
+BOOLEAN test_remove_child16_fi_only_branches_documented()
+{
+    TEST_START("remove_child16: FI-only branches (documented)");
+    DbgPrint("[INFO] art_create_node(NODE4) failure requires fault injection to simulate.\n");
+    DbgPrint("[INFO] copy_header failure requires fault injection to simulate.\n");
+    TEST_END("remove_child16: FI-only branches (documented)");
+    return TRUE;
+}
+
+// ===============================================================
+// Suite runner
+// ===============================================================
+NTSTATUS run_all_remove_child16_tests()
+{
+    DbgPrint("\n========================================\n");
+    DbgPrint("Starting remove_child16() Test Suite\n");
+    DbgPrint("========================================\n\n");
+
+    BOOLEAN all = TRUE;
+
+    if (!test_remove_child16_guards())                          all = FALSE; // 1
+    if (!test_remove_child16_invalid_position())                all = FALSE; // 2
+    if (!test_remove_child16_child_null())                      all = FALSE; // 3
+    if (!test_remove_child16_remove_middle_no_resize())         all = FALSE; // 4
+    if (!test_remove_child16_remove_first_no_resize())          all = FALSE; // 5
+    if (!test_remove_child16_remove_last_no_resize())           all = FALSE; // 6
+    if (!test_remove_child16_resize_to_node4())                 all = FALSE; // 7
+    if (!test_remove_child16_fi_only_branches_documented())     all = FALSE; // 8 (doc)
+
+    DbgPrint("\n========================================\n");
+    if (all) {
+        DbgPrint("ALL remove_child16() TESTS PASSED!\n");
+    }
+    else {
+        DbgPrint("SOME remove_child16() TESTS FAILED!\n");
+    }
+    DbgPrint("========================================\n\n");
+
+    return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+}
