@@ -21,7 +21,9 @@ static PUCHAR ri_key(const char* s, USHORT* out_len)
     if (out_len) *out_len = len;
     return k;
 }
-static VOID ri_free_key(PUCHAR k) { if (k) ExFreePoolWithTag(k, ART_TAG); }
+static VOID ri_free_key(PUCHAR k) { 
+    if (k) ExFreePool2(k, ART_TAG, NULL, 0);
+}
 
 // Bir köke işaretçi döndür (NULL’la başlat)
 static VOID ri_reset_root(ART_NODE** root) { *root = NULL; }
@@ -439,9 +441,9 @@ BOOLEAN test_recursive_insert_updates_ref_on_split()
 // =====================================================
 NTSTATUS run_all_recursive_insert_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting recursive_insert() Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting recursive_insert() Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN ok = TRUE;
 
@@ -456,10 +458,10 @@ NTSTATUS run_all_recursive_insert_tests()
     if (!test_recursive_insert_terminator_no_prefix_path())   ok = FALSE; // 9
     if (!test_recursive_insert_updates_ref_on_split())        ok = FALSE; // 10
 
-    DbgPrint("\n========================================\n");
-    if (ok) DbgPrint("ALL recursive_insert() TESTS PASSED!\n");
-    else    DbgPrint("SOME recursive_insert() TESTS FAILED!\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    if (ok) LOG_MSG("ALL recursive_insert() TESTS PASSED!\n");
+    else    LOG_MSG("SOME recursive_insert() TESTS FAILED!\n");
+    LOG_MSG("========================================\n\n");
 
     return ok ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

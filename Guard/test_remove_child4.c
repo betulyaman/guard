@@ -1,9 +1,7 @@
 ﻿#include "test_art.h"
 
 // Function under test
-STATIC NTSTATUS remove_child4(_In_ ART_NODE4* node,
-    _Inout_ ART_NODE** ref,
-    _In_ ART_NODE** leaf);
+STATIC NTSTATUS remove_child4(_Inout_ ART_NODE4* node, _Inout_ ART_NODE** ref, _Inout_ ART_NODE** remove_slot);
 
 // ---------- tiny local helpers (no CRT) ----------
 static VOID t_zero(void* p, SIZE_T n) { RtlZeroMemory(p, n); }
@@ -315,8 +313,7 @@ BOOLEAN test_remove_child4_collapse_to_leaf()
 }
 
 // ===============================================================
-// Test 8: Collapse to remaining child = INTERNAL NODE
-//   Verify prefix merge: new_prefix = parent_prefix + key_byte + child_prefix (clamped to MAX_PREFIX_LENGTH)
+// Collapse to internal + prefix merge (safe version; English comments)
 // ===============================================================
 BOOLEAN test_remove_child4_collapse_to_internal_prefix_merge()
 {
@@ -326,58 +323,55 @@ BOOLEAN test_remove_child4_collapse_to_internal_prefix_merge()
 
     ART_NODE* ref = NULL;
     ART_NODE* internal = NULL;
-    ART_NODE4* n4 = t_make_node4_with_internal_child(/*key*/ 0x21 /*'!'*/, &ref, &internal);
+    ART_NODE4* n4 = t_make_node4_with_internal_child(/*key*/ 0x21 /* '!' */, &ref, &internal);
     TEST_ASSERT(n4 != NULL && internal != NULL, "8-pre: NODE4 with internal child");
 
-    // Parent prefix: "ABC" (3 bytes)
-    n4->base.prefix_length = 3;
-    n4->base.prefix[0] = 'A';
-    n4->base.prefix[1] = 'B';
-    n4->base.prefix[2] = 'C';
+    // Parent prefix: "ABC" (logical length = 3, stored = min(3, MAX_PREFIX_LENGTH))
+    static const UCHAR PARENT_PFX[] = { 'A','B','C' };
+    n4->base.prefix_length = (USHORT)RTL_NUMBER_OF(PARENT_PFX);
+    for (USHORT i = 0; i < n4->base.prefix_length && i < (USHORT)MAX_PREFIX_LENGTH; ++i) {
+        n4->base.prefix[i] = PARENT_PFX[i];
+    }
 
-    // Add a second child (leaf) to make count=2
-    UCHAR kbuf[2] = { 'x', 'y' };
+    // Add a second child (leaf) → count=2 (we will remove it)
+    UCHAR kbuf[2] = { 'x','y' };
     ART_LEAF* lf = make_leaf(kbuf, 2, 0x55);
     TEST_ASSERT(lf != NULL, "8-pre: created leaf");
     n4->keys[1] = 0x7E; // '~'
     n4->children[1] = (ART_NODE*)SET_LEAF(lf);
     n4->base.num_of_child = 2;
 
-    // Give child (internal) its own prefix: "child"
+    // Internal child prefix: "child" (logical length = 5, stored = min(5, MAX_PREFIX_LENGTH))
+    static const UCHAR CHILD_PFX[] = { 'c','h','i','l','d' };
     ART_NODE* child_node = internal;
-    child_node->prefix_length = 5;
-    child_node->prefix[0] = 'c';
-    child_node->prefix[1] = 'h';
-    child_node->prefix[2] = 'i';
-    child_node->prefix[3] = 'l';
-    child_node->prefix[4] = 'd';
+    child_node->prefix_length = (USHORT)RTL_NUMBER_OF(CHILD_PFX);
+    for (USHORT i = 0; i < child_node->prefix_length && i < (USHORT)MAX_PREFIX_LENGTH; ++i) {
+        child_node->prefix[i] = CHILD_PFX[i];
+    }
 
     ULONG frees_before = g_free_call_count;
 
-    // Remove leaf at pos 1 so the remaining single child is the internal node at pos 0
+    // Remove leaf at index 1 → only the internal node remains; collapse + prefix merge should occur
     NTSTATUS st = remove_child4(n4, &ref, &n4->children[1]);
     TEST_ASSERT(NT_SUCCESS(st), "8.1: success");
-
-    // ref should now be the internal node
     TEST_ASSERT(ref == internal, "8.2: ref now equals internal node");
 
-    // Verify merged prefix: "ABC" + '!' + "child" = "ABC!child" (9 bytes)
-    TEST_ASSERT(child_node->prefix_length == 9, "8.3: merged prefix length is 9");
+    // Logical merged length: 3 (ABC) + 1 ('!') + 5 ("child") = 9
+    const USHORT expected_len = 9;
+    TEST_ASSERT(child_node->prefix_length == expected_len, "8.3: merged logical prefix length is 9");
 
-    TEST_ASSERT(child_node->prefix[0] == 'A' &&
-        child_node->prefix[1] == 'B' &&
-        child_node->prefix[2] == 'C' &&
-        child_node->prefix[3] == '!' &&
-        child_node->prefix[4] == 'c' &&
-        child_node->prefix[5] == 'h' &&
-        child_node->prefix[6] == 'i' &&
-        child_node->prefix[7] == 'l' &&
-        child_node->prefix[8] == 'd', "8.4: merged prefix content correct");
+    // Validate stored bytes up to MAX_PREFIX_LENGTH
+    static const UCHAR EXPECTED_BYTES[9] = { 'A','B','C','!','c','h','i','l','d' };
+    USHORT to_check = expected_len;
+    if (to_check > (USHORT)MAX_PREFIX_LENGTH) to_check = (USHORT)MAX_PREFIX_LENGTH;
+    for (USHORT i = 0; i < to_check; ++i) {
+        TEST_ASSERT(child_node->prefix[i] == EXPECTED_BYTES[i], "8.4: merged prefix content (clamped) correct");
+    }
 
     TEST_ASSERT(g_free_call_count == frees_before + 1, "8.5: old NODE4 freed once");
     TEST_ASSERT(g_last_freed_tag == ART_TAG, "8.6: freed with ART_TAG");
 
-    // Cleanup: free internal node (no children) and removed leaf
+    // Cleanup
     if (ref && !IS_LEAF(ref)) {
         ART_NODE* tmp = ref;
         free_node(&tmp);
@@ -528,13 +522,225 @@ BOOLEAN test_remove_child4_remove_last_child_clears_ref()
 }
 
 // ===============================================================
+// EXTRA 1: Collapse to internal — parent_prefix=0, child_prefix=0
+//          result must contain only the edge byte (length=1, content=edge)
+// ===============================================================
+BOOLEAN test_remove_child4_merge_only_edge_when_prefixes_empty()
+{
+    TEST_START("remove_child4: merge-only edge when prefixes empty");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_NODE* internal = NULL;
+    ART_NODE4* n4 = t_make_node4_with_internal_child(/*key*/ 0x2A /* '*' */, &ref, &internal);
+    TEST_ASSERT(n4 && internal, "E1-pre: NODE4 + internal");
+
+    // Parent prefix = 0
+    n4->base.prefix_length = 0;
+
+    // Add a second child (leaf) → count=2, then remove it to trigger collapse
+    UCHAR kbuf[1] = { 'x' };
+    ART_LEAF* lf = make_leaf(kbuf, 1, 0x01);
+    TEST_ASSERT(lf, "E1-pre: leaf alloc");
+    n4->keys[1] = 0x7A; // 'z'
+    n4->children[1] = (ART_NODE*)SET_LEAF(lf);
+    n4->base.num_of_child = 2;
+
+    // Child (internal) prefix = 0
+    internal->prefix_length = 0;
+
+    NTSTATUS st = remove_child4(n4, &ref, &n4->children[1]);
+    TEST_ASSERT(NT_SUCCESS(st), "E1.1: collapse success");
+    TEST_ASSERT(ref == internal, "E1.2: ref == internal");
+
+    TEST_ASSERT(internal->prefix_length == 1, "E1.3: merged logical length == 1");
+    TEST_ASSERT(internal->prefix[0] == 0x2A, "E1.4: merged first byte == edge '*' ");
+
+    // Cleanup
+    if (ref && !IS_LEAF(ref)) { ART_NODE* tmp = ref; free_node(&tmp); }
+    if (lf) free_leaf(&lf);
+
+    TEST_END("remove_child4: merge-only edge when prefixes empty");
+    return TRUE;
+}
+
+// ===============================================================
+// EXTRA 2: Collapse to internal — parent.prefix_length > MAX_PREFIX_LENGTH
+//          Logical length must be preserved (no clamp of logical length).
+//          Stored bytes (clamped view) must be correct within the first
+//          MAX_PREFIX_LENGTH bytes.
+// ===============================================================
+BOOLEAN test_remove_child4_merge_extended_length_beyond_cap()
+{
+    TEST_START("remove_child4: extended logical length beyond MAX_PREFIX_LENGTH");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_NODE* internal = NULL;
+    ART_NODE4* n4 = t_make_node4_with_internal_child(/*key*/ 0x21 /* '!' */, &ref, &internal);
+    TEST_ASSERT(n4 && internal, "E2-pre: NODE4 + internal");
+
+    // Parent logical prefix is large (e.g., MAX_PREFIX_LENGTH + 50).
+    // Only the first MAX_PREFIX_LENGTH bytes are physically stored.
+    const USHORT parent_logical = (USHORT)(MAX_PREFIX_LENGTH + 50);
+    n4->base.prefix_length = parent_logical;
+    for (USHORT i = 0; i < (USHORT)MAX_PREFIX_LENGTH; ++i)
+        n4->base.prefix[i] = (UCHAR)('A' + (i % 26));
+
+    // Add second child (leaf) so we can remove it and collapse
+    UCHAR kbuf[1] = { 'y' };
+    ART_LEAF* lf = make_leaf(kbuf, 1, 0x02);
+    TEST_ASSERT(lf, "E2-pre: leaf alloc");
+    n4->keys[1] = 0x7E; // '~'
+    n4->children[1] = (ART_NODE*)SET_LEAF(lf);
+    n4->base.num_of_child = 2;
+
+    // Child prefix: 8 bytes of 'c'
+    internal->prefix_length = 8;
+    for (USHORT i = 0; i < 8; ++i) internal->prefix[i] = 'c';
+
+    NTSTATUS st = remove_child4(n4, &ref, &n4->children[1]);
+    TEST_ASSERT(NT_SUCCESS(st), "E2.1: collapse success");
+    TEST_ASSERT(ref == internal, "E2.2: ref == internal");
+
+    // Logical length = parent_logical + 1 (edge) + 8 (child)
+    TEST_ASSERT(internal->prefix_length == (USHORT)(parent_logical + 1 + 8),
+        "E2.3: merged logical length preserved (>MAX_PREFIX_LENGTH)");
+
+    TEST_ASSERT(internal->prefix_length > MAX_PREFIX_LENGTH, "E2.4: logical length indeed > cap");
+
+    // Cleanup
+    if (ref && !IS_LEAF(ref)) { ART_NODE* tmp = ref; free_node(&tmp); }
+    if (lf) free_leaf(&lf);
+
+    TEST_END("remove_child4: extended logical length beyond MAX_PREFIX_LENGTH");
+    return TRUE;
+}
+
+// ===============================================================
+// EXTRA 3: Collapse to internal — USHORT overflow guard (clamp to 0xFFFF)
+// ===============================================================
+BOOLEAN test_remove_child4_merge_ushort_clamp()
+{
+    TEST_START("remove_child4: USHORT clamp of logical prefix length");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_NODE* internal = NULL;
+    ART_NODE4* n4 = t_make_node4_with_internal_child(/*key*/ 0x23 /* '#' */, &ref, &internal);
+    TEST_ASSERT(n4 && internal, "E3-pre: NODE4 + internal");
+
+    // Parent ~65530, child 10 → total > 65535 ⇒ clamp to 65535
+    const USHORT parent_logical = 65530;
+    n4->base.prefix_length = parent_logical;
+    for (USHORT i = 0; i < (USHORT)MAX_PREFIX_LENGTH; ++i)
+        n4->base.prefix[i] = 0xAB;
+
+    // Add second child (leaf)
+    UCHAR kbuf[1] = { 'q' };
+    ART_LEAF* lf = make_leaf(kbuf, 1, 0x03);
+    TEST_ASSERT(lf, "E3-pre: leaf alloc");
+    n4->keys[1] = 0x61; // 'a'
+    n4->children[1] = (ART_NODE*)SET_LEAF(lf);
+    n4->base.num_of_child = 2;
+
+    internal->prefix_length = 10;
+    for (USHORT i = 0; i < 10; ++i) internal->prefix[i] = 0xCD;
+
+    NTSTATUS st = remove_child4(n4, &ref, &n4->children[1]);
+    TEST_ASSERT(NT_SUCCESS(st), "E3.1: collapse success");
+    TEST_ASSERT(ref == internal, "E3.2: ref == internal");
+
+    TEST_ASSERT(internal->prefix_length == 0xFFFF,
+        "E3.3: logical length clamped to MAXUSHORT");
+
+    // Cleanup
+    if (ref && !IS_LEAF(ref)) { ART_NODE* tmp = ref; free_node(&tmp); }
+    if (lf) free_leaf(&lf);
+
+    TEST_END("remove_child4: USHORT clamp of logical prefix length");
+    return TRUE;
+}
+
+// ===============================================================
+// EXTRA 4: Tail clearing after shift (keys[last]=0, children[last]=NULL)
+// ===============================================================
+BOOLEAN test_remove_child4_shift_clears_tail()
+{
+    TEST_START("remove_child4: tail slot cleared after shift");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_LEAF* leaves[4] = { 0 };
+    ART_NODE4* n4 = t_make_node4_with_children_count(/*count*/ 4, /*first_key*/ 10, &ref, leaves, RTL_NUMBER_OF(leaves));
+    TEST_ASSERT(n4, "E4-pre: NODE4(4)");
+
+    // Remove a middle child (index 1)
+    NTSTATUS st = remove_child4(n4, &ref, &n4->children[1]);
+    TEST_ASSERT(NT_SUCCESS(st), "E4.1: success");
+    TEST_ASSERT(n4->base.num_of_child == 3, "E4.2: count=3");
+    TEST_ASSERT(n4->children[3] == NULL, "E4.3: last child slot cleared");
+    TEST_ASSERT(n4->keys[3] == 0, "E4.4: last key slot cleared");
+
+    // Cleanup
+    for (USHORT i = 0; i < 4; i++) {
+        if (leaves[i]) { ART_LEAF* lf = leaves[i]; free_leaf(&lf); }
+    }
+    t_free_node4_and_leaf_children(&n4);
+
+    TEST_END("remove_child4: tail slot cleared after shift");
+    return TRUE;
+}
+
+// ===============================================================
+// EXTRA 5: Invalid child count guards (0 and >4)
+// ===============================================================
+BOOLEAN test_remove_child4_invalid_child_counts()
+{
+    TEST_START("remove_child4: invalid child counts");
+
+    reset_mock_state();
+
+    // count=0 → must return DATA_ERROR
+    {
+        ART_NODE4* n4 = (ART_NODE4*)art_create_node(NODE4);
+        TEST_ASSERT(n4, "E5-pre: NODE4 alloc");
+        n4->base.type = NODE4;
+        n4->base.num_of_child = 0;
+        ART_NODE* ref = (ART_NODE*)n4;
+        NTSTATUS st = remove_child4(n4, &ref, &n4->children[0]);
+        TEST_ASSERT(st == STATUS_DATA_ERROR, "E5.1: count=0 => DATA_ERROR");
+        t_free_node4_and_leaf_children(&n4);
+    }
+
+    // count=5 (>4) — deliberately corrupted state → must return DATA_ERROR
+    {
+        ART_NODE4* n4 = (ART_NODE4*)art_create_node(NODE4);
+        TEST_ASSERT(n4, "E5-pre: NODE4 alloc #2");
+        n4->base.type = NODE4;
+        n4->base.num_of_child = 5;
+        ART_NODE* ref = (ART_NODE*)n4;
+        NTSTATUS st = remove_child4(n4, &ref, &n4->children[0]);
+        TEST_ASSERT(st == STATUS_DATA_ERROR, "E5.2: count>4 => DATA_ERROR");
+        t_free_node4_and_leaf_children(&n4);
+    }
+
+    TEST_END("remove_child4: invalid child counts");
+    return TRUE;
+}
+
+// ===============================================================
 // Suite runner
 // ===============================================================
 NTSTATUS run_all_remove_child4_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting remove_child4() Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting remove_child4() Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all = TRUE;
 
@@ -549,15 +755,21 @@ NTSTATUS run_all_remove_child4_tests()
     if (!test_remove_child4_collapse_remaining_child_null())    all = FALSE; // 9
     if (!test_remove_child4_prefix_truncation_on_collapse())    all = FALSE; // 10
     if (!test_remove_child4_remove_last_child_clears_ref())     all = FALSE;
+    if (!test_remove_child4_merge_only_edge_when_prefixes_empty())  all = FALSE;
+    if (!test_remove_child4_merge_extended_length_beyond_cap())     all = FALSE;
+    if (!test_remove_child4_merge_ushort_clamp())                   all = FALSE;
+    if (!test_remove_child4_shift_clears_tail())                    all = FALSE;
+    if (!test_remove_child4_invalid_child_counts())                 all = FALSE;
 
-    DbgPrint("\n========================================\n");
+
+    LOG_MSG("\n========================================\n");
     if (all) {
-        DbgPrint("ALL remove_child4() TESTS PASSED!\n");
+        LOG_MSG("ALL remove_child4() TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME remove_child4() TESTS FAILED!\n");
+        LOG_MSG("SOME remove_child4() TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

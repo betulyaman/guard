@@ -312,9 +312,9 @@ BOOLEAN test_add_child256_no_allocfree_sideeffects()
    ========================================================= */
 NTSTATUS run_all_add_child256_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting add_child256() Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting add_child256() Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all_passed = TRUE;
 
@@ -327,14 +327,14 @@ NTSTATUS run_all_add_child256_tests()
     if (!test_add_child256_multiple_inserts())          all_passed = FALSE;
     if (!test_add_child256_no_allocfree_sideeffects())  all_passed = FALSE;
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all_passed) {
-        DbgPrint("ALL add_child256() TESTS PASSED!\n");
+        LOG_MSG("ALL add_child256() TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME add_child256() TESTS FAILED!\n");
+        LOG_MSG("SOME add_child256() TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

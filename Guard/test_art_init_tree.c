@@ -28,7 +28,7 @@ BOOLEAN test_art_init_tree_null_parameter()
     // (1.3)
     TEST_ASSERT(g_free_call_count == 0, "1.3: No frees for NULL parameter");
 
-    DbgPrint("[INFO] Test 1: NULL input safely rejected without side effects\n");
+    LOG_MSG("[INFO] Test 1: NULL input safely rejected without side effects\n");
     TEST_END("art_init_tree: NULL parameter");
     return TRUE;
 }
@@ -69,7 +69,7 @@ BOOLEAN test_art_init_tree_basic_zeroing()
     TEST_ASSERT(g_alloc_call_count == 0, "2.4: No allocations should occur");
     TEST_ASSERT(g_free_call_count == 0, "2.5: No frees should occur");
 
-    DbgPrint("[INFO] Test 2: tree initialized to a clean state (root=NULL, size=0)\n");
+    LOG_MSG("[INFO] Test 2: tree initialized to a clean state (root=NULL, size=0)\n");
     TEST_END("art_init_tree: basic zeroing behavior");
     return TRUE;
 }
@@ -111,7 +111,7 @@ BOOLEAN test_art_init_tree_idempotency()
     TEST_ASSERT(g_alloc_call_count == 0, "3.3: No allocations across repeated calls");
     TEST_ASSERT(g_free_call_count == 0, "3.4: No frees across repeated calls");
 
-    DbgPrint("[INFO] Test 3: repeated initialization keeps tree clean without allocations\n");
+    LOG_MSG("[INFO] Test 3: repeated initialization keeps tree clean without allocations\n");
     TEST_END("art_init_tree: idempotency");
     return TRUE;
 }
@@ -156,10 +156,10 @@ BOOLEAN test_art_init_tree_does_not_free_existing_root()
     TEST_ASSERT(g_free_call_count == frees_before, "4.3: art_init_tree must not free existing root");
 
     // Manually free the node now to avoid a leak in test
-    ExFreePoolWithTag(n, ART_TAG);
+    ExFreePool2(n, ART_TAG, NULL, 0);
     TEST_ASSERT(g_free_call_count == frees_before + 1, "4.4: Manual cleanup increments free counter");
 
-    DbgPrint("[INFO] Test 4: initializer does not perform ownership cleanup (as expected)\n");
+    LOG_MSG("[INFO] Test 4: initializer does not perform ownership cleanup (as expected)\n");
     TEST_END("art_init_tree: does not free existing root");
     return TRUE;
 }
@@ -203,7 +203,7 @@ BOOLEAN test_art_init_tree_many_without_allocs()
     TEST_ASSERT(g_alloc_call_count == 0, "5.3: No allocations across batch init");
     TEST_ASSERT(g_free_call_count == 0, "5.4: No frees across batch init");
 
-    DbgPrint("[INFO] Test 5: batch initialization performed with zero allocations and frees\n");
+    LOG_MSG("[INFO] Test 5: batch initialization performed with zero allocations and frees\n");
     TEST_END("art_init_tree: many init calls without allocations");
     return TRUE;
 }
@@ -213,9 +213,9 @@ BOOLEAN test_art_init_tree_many_without_allocs()
    ========================================================================= */
 NTSTATUS run_all_art_init_tree_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting art_init_tree Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting art_init_tree Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all_passed = TRUE;
 
@@ -225,14 +225,14 @@ NTSTATUS run_all_art_init_tree_tests()
     if (!test_art_init_tree_does_not_free_existing_root()) all_passed = FALSE;
     if (!test_art_init_tree_many_without_allocs())       all_passed = FALSE;
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all_passed) {
-        DbgPrint("ALL art_init_tree TESTS PASSED!\n");
+        LOG_MSG("ALL art_init_tree TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME art_init_tree TESTS FAILED!\n");
+        LOG_MSG("SOME art_init_tree TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

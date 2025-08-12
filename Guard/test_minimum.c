@@ -20,7 +20,7 @@ BOOLEAN test_minimum_null_input()
     TEST_ASSERT(got == NULL, "1.1: minimum(NULL) must return NULL");
     TEST_ASSERT(g_alloc_call_count == a0 && g_free_call_count == f0, "1.1: no alloc/free inside");
 
-    DbgPrint("[INFO] Test 1 completed\n");
+    LOG_MSG("[INFO] Test 1 completed\n");
     TEST_END("minimum: NULL input");
     return TRUE;
 }
@@ -50,7 +50,7 @@ BOOLEAN test_minimum_leaf_fastpath()
 
     test_free_leaf(raw);
 
-    DbgPrint("[INFO] Test 2 completed\n");
+    LOG_MSG("[INFO] Test 2 completed\n");
     TEST_END("minimum: leaf fast-path");
     return TRUE;
 }
@@ -120,7 +120,7 @@ BOOLEAN test_minimum_invalid_and_empty()
         test_free_node_all(n256);
     }
 
-    DbgPrint("[INFO] Test 3 completed\n");
+    LOG_MSG("[INFO] Test 3 completed\n");
     TEST_END("minimum: invalid type & empty nodes");
     return TRUE;
 }
@@ -172,7 +172,7 @@ BOOLEAN test_minimum_node4_traversal()
         test_free_node_all(n4);
     }
 
-    DbgPrint("[INFO] Test 4 completed\n");
+    LOG_MSG("[INFO] Test 4 completed\n");
     TEST_END("minimum: NODE4 traversal");
     return TRUE;
 }
@@ -201,7 +201,7 @@ BOOLEAN test_minimum_node16_traversal()
         test_free_node_all(n16);
     }
 
-    DbgPrint("[INFO] Test 5 completed\n");
+    LOG_MSG("[INFO] Test 5 completed\n");
     TEST_END("minimum: NODE16 traversal");
     return TRUE;
 }
@@ -243,16 +243,16 @@ BOOLEAN test_minimum_node48_traversal()
     {
         ART_NODE48* n48 = t_alloc_node48(); TEST_ASSERT(n48, "6.2-pre: node48 alloc");
         n48->base.type = NODE48;
-        n48->base.num_of_child = 2;
+        n48->base.num_of_child = 1;
 
         // earlier maps point to empty slots
-        n48->child_index[1] = 5; // -> slot 4, but leave children[4]==NULL
-        n48->child_index[2] = 0; // not mapped
+        n48->child_index[1] = 0; 
+        n48->child_index[2] = 0; 
 
         // valid mapping later
         ART_LEAF* lf = test_alloc_leaf(6, 0x50); TEST_ASSERT(lf, "6.2-pre: leaf alloc");
-        n48->child_index[10] = 2; // -> slot 1
-        n48->children[1] = SET_LEAF(lf);
+        n48->child_index[10] = 1; // -> slot 0
+        n48->children[0] = SET_LEAF(lf);
 
         ART_LEAF* got = minimum(&n48->base);
         TEST_ASSERT(got == lf, "6.2: must skip unmapped/NULL and return first valid child");
@@ -261,7 +261,7 @@ BOOLEAN test_minimum_node48_traversal()
         test_free_node_all(n48);
     }
 
-    DbgPrint("[INFO] Test 6 completed\n");
+    LOG_MSG("[INFO] Test 6 completed\n");
     TEST_END("minimum: NODE48 traversal");
     return TRUE;
 }
@@ -290,7 +290,7 @@ BOOLEAN test_minimum_node256_traversal()
         test_free_node_all(n256);
     }
 
-    DbgPrint("[INFO] Test 7 completed\n");
+    LOG_MSG("[INFO] Test 7 completed\n");
     TEST_END("minimum: NODE256 traversal");
     return TRUE;
 }
@@ -344,7 +344,7 @@ BOOLEAN test_minimum_multilevel_recursion()
     test_free_node_all(n16);
     test_free_node_all(n4);
 
-    DbgPrint("[INFO] Test 8 completed\n");
+    LOG_MSG("[INFO] Test 8 completed\n");
     TEST_END("minimum: multi-level recursion");
     return TRUE;
 }
@@ -376,19 +376,41 @@ BOOLEAN test_minimum_no_allocfree_sideeffects()
     test_free_leaf(lf);
     test_free_node_all(n4);
 
-    DbgPrint("[INFO] Test 9 completed\n");
+    LOG_MSG("[INFO] Test 9 completed\n");
     TEST_END("minimum: no alloc/free side-effects");
     return TRUE;
 }
+
+BOOLEAN test_minimum_node48_corrupt_mapped_null_returns_null()
+{
+    TEST_START("minimum: NODE48 mapped, NULL is corruption (returns NULL)");
+
+    reset_mock_state();
+    ART_NODE48* n48 = t_alloc_node48(); TEST_ASSERT(n48, "pre: node48 alloc");
+    n48->base.type = NODE48;
+    n48->base.num_of_child = 1;
+
+    // Kasıtlı korupsiyon: map var ama children NULL
+    n48->child_index[7] = 1;   // -> slot 0
+    n48->children[0] = NULL;
+
+    ART_LEAF* got = minimum(&n48->base);
+    TEST_ASSERT(got == NULL, "mapped NULL child must be treated as corruption");
+
+    test_free_node_all(n48);
+    TEST_END("minimum: NODE48 mapped, NULL is corruption (returns NULL)");
+    return TRUE;
+}
+
 
 /* =========================================================
    Suite Runner
    ========================================================= */
 NTSTATUS run_all_minimum_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting minimum() Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting minimum() Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all_passed = TRUE;
 
@@ -401,15 +423,16 @@ NTSTATUS run_all_minimum_tests()
     if (!test_minimum_node256_traversal())       all_passed = FALSE;  // Test 7
     if (!test_minimum_multilevel_recursion())    all_passed = FALSE;  // Test 8
     if (!test_minimum_no_allocfree_sideeffects())all_passed = FALSE;  // Test 9
+    if (!test_minimum_node48_corrupt_mapped_null_returns_null())all_passed = FALSE;  // Test 10
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all_passed) {
-        DbgPrint("ALL minimum() TESTS PASSED!\n");
+        LOG_MSG("ALL minimum() TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME minimum() TESTS FAILED!\n");
+        LOG_MSG("SOME minimum() TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

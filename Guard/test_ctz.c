@@ -41,7 +41,7 @@ BOOLEAN test_ctz_zero_input()
     TEST_ASSERT(g_alloc_call_count == alloc_before, "1.2: No allocations must occur");
     TEST_ASSERT(g_free_call_count == free_before, "1.3: No frees must occur");
 
-    DbgPrint("[INFO] Test 1 done: zero input returns 32 and has no side effects\n");
+    LOG_MSG("[INFO] Test 1 done: zero input returns 32 and has no side effects\n");
     TEST_END("ctz: zero input");
     return TRUE;
 }
@@ -71,7 +71,7 @@ BOOLEAN test_ctz_single_bit_sweep()
     TEST_ASSERT(g_alloc_call_count == alloc_before, "2.end: No allocations in sweep");
     TEST_ASSERT(g_free_call_count == free_before, "2.end: No frees in sweep");
 
-    DbgPrint("[INFO] Test 2 done: single-bit positions all correct\n");
+    LOG_MSG("[INFO] Test 2 done: single-bit positions all correct\n");
     TEST_END("ctz: single-bit sweep 0..31");
     return TRUE;
 }
@@ -129,7 +129,7 @@ BOOLEAN test_ctz_multi_bit_examples()
     TEST_ASSERT(g_alloc_call_count == alloc_before, "3.end: No allocations");
     TEST_ASSERT(g_free_call_count == free_before, "3.end: No frees");
 
-    DbgPrint("[INFO] Test 3 done: multi-bit examples match expected indices\n");
+    LOG_MSG("[INFO] Test 3 done: multi-bit examples match expected indices\n");
     TEST_END("ctz: multi-bit examples");
     return TRUE;
 }
@@ -171,7 +171,7 @@ BOOLEAN test_ctz_crosscheck_lcg()
     TEST_ASSERT(g_alloc_call_count == alloc_before, "4.end: No allocations");
     TEST_ASSERT(g_free_call_count == free_before, "4.end: No frees");
 
-    DbgPrint("[INFO] Test 4 done: LCG cross-check passed for 256 values\n");
+    LOG_MSG("[INFO] Test 4 done: LCG cross-check passed for 256 values\n");
     TEST_END("ctz: cross-check vs reference (LCG)");
     return TRUE;
 }
@@ -194,15 +194,17 @@ BOOLEAN test_ctz_structured_patterns()
 
     for (unsigned k = 0; k < 32u; ++k) {
         UINT32 low = (k == 31u) ? 0x80000000u : (1u << k);
-
-        // (5.k.1) add noisy high bits
+        
+        // (5.k.1) add noisy high bits strictly above k
         {
-            UINT32 x = low | 0xF0F00000u;
+            // Bits strictly above k; for k==31 there is no higher bit -> 0
+            UINT32 high_noise = (k < 31u) ? (~0u << (k + 1u)) : 0u;
+            UINT32 x = low | high_noise;
             unsigned r = ctz(x);
             TEST_ASSERT(r == k, "5.k.1: noisy-high pattern must not affect lowest-bit index");
         }
 
-        // (5.k.2) force highest bit as well
+        // (5.k.2) force the MSB as well (still above k except k==31 where it's equal)
         {
             UINT32 x = low | 0x80000000u;
             unsigned r = ctz(x);
@@ -213,7 +215,7 @@ BOOLEAN test_ctz_structured_patterns()
     TEST_ASSERT(g_alloc_call_count == alloc_before, "5.end: No allocations");
     TEST_ASSERT(g_free_call_count == free_before, "5.end: No frees");
 
-    DbgPrint("[INFO] Test 5 done: structured patterns validated across all bit positions\n");
+    LOG_MSG("[INFO] Test 5 done: structured patterns validated across all bit positions\n");
     TEST_END("ctz: structured pattern sweep");
     return TRUE;
 }
@@ -223,9 +225,9 @@ BOOLEAN test_ctz_structured_patterns()
    ========================================================= */
 NTSTATUS run_all_ctz_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting ctz() Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting ctz() Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all_passed = TRUE;
 
@@ -235,14 +237,14 @@ NTSTATUS run_all_ctz_tests()
     if (!test_ctz_crosscheck_lcg())      all_passed = FALSE;
     if (!test_ctz_structured_patterns()) all_passed = FALSE;
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all_passed) {
-        DbgPrint("ALL ctz TESTS PASSED!\n");
+        LOG_MSG("ALL ctz TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME ctz TESTS FAILED!\n");
+        LOG_MSG("SOME ctz TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

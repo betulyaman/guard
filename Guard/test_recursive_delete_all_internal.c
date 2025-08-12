@@ -397,9 +397,9 @@ BOOLEAN test_delete_all_internal_deep()
 // ============================
 NTSTATUS run_all_recursive_delete_all_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting recursive_delete_all_internal() Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting recursive_delete_all_internal() Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all = TRUE;
 
@@ -411,14 +411,14 @@ NTSTATUS run_all_recursive_delete_all_tests()
     if (!test_delete_all_internal_node256_mixed())  all = FALSE; // (6)
     if (!test_delete_all_internal_deep())           all = FALSE; // (7)
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all) {
-        DbgPrint("ALL recursive_delete_all_internal() TESTS PASSED! \n");
+        LOG_MSG("ALL recursive_delete_all_internal() TESTS PASSED! \n");
     }
     else {
-        DbgPrint("SOME recursive_delete_all_internal() TESTS FAILED! \n");
+        LOG_MSG("SOME recursive_delete_all_internal() TESTS FAILED! \n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

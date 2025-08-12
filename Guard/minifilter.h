@@ -3,6 +3,7 @@
 
 #define DEBUG 1
 #define UNIT_TEST 1
+#define ART_ENABLE_POISON_ON_FREE 1
 
 #if DEBUG
 #define LEAF_FREED_MAGIC ((USHORT)0xDEAD)

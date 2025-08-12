@@ -118,7 +118,7 @@ NTSTATUS message_notify_callback(
             g_context.connection_state = CONNECTION_AUTHENTICATING;
 
 
-            DbgPrint("Connection authenticating.\n");
+            LOG_MSG("Connection authenticating.\n");
             return STATUS_SUCCESS;
         } break;
 
@@ -139,11 +139,11 @@ NTSTATUS message_notify_callback(
             NTSTATUS status = verify_HMAC_SHA256_signature(g_context.nonce, user_hmac_signature.hmac);
             if (NT_SUCCESS(status)) {
                 g_context.connection_state = CONNECTION_AUTHENTICATED;
-                DbgPrint("Connection authenticated.\n");
+                LOG_MSG("Connection authenticated.\n");
                 return STATUS_SUCCESS;
             }
             else {
-                DbgPrint("Authentication failed, closing client port.\n");
+                LOG_MSG("Authentication failed, closing client port.\n");
                 if (g_context.client_port != NULL) {
                     FltCloseClientPort(g_context.registered_filter, &g_context.client_port);
                     g_context.client_port = NULL;
@@ -225,19 +225,19 @@ NTSTATUS message_notify_callback(
             RtlInitUnicodeStringEx(&unicode_string, policy.path);
 
             if (policy.status == POLICY_STATUS_ADD) {
-                DbgPrint("\n\rADD %ls\n\r", policy.path);
+                LOG_MSG("\n\rADD %ls\n\r", policy.path);
                 art_insert(&g_art_tree, &unicode_string, policy.access_mask, NULL);
 #if DEBUG
-                DbgPrint("\n\rNEW TREE: \n\r");
+                LOG_MSG("\n\rNEW TREE: \n\r");
                 art_validate_tree_quick(&g_art_tree);
                 art_print_tree(&g_art_tree);
 #endif
             }
             else if (policy.status == POLICY_STATUS_REMOVE) {
-                DbgPrint("\n\rREMOVE %ls\n\r", policy.path);
+                LOG_MSG("\n\rREMOVE %ls\n\r", policy.path);
                 art_delete_subtree(&g_art_tree, &unicode_string);
 #if DEBUG
-                DbgPrint("\n\rNEW TREE: \n\r");
+                LOG_MSG("\n\rNEW TREE: \n\r");
                 art_validate_tree_quick(&g_art_tree);
                 art_print_tree(&g_art_tree);
 #endif
@@ -246,8 +246,8 @@ NTSTATUS message_notify_callback(
             {
                 LOG_MSG("Unexpected policy status!");
             }
-            DbgPrint("\n\n\n");
-           //DbgPrint("Connection established.\n");
+            LOG_MSG("\n\n\n");
+           //LOG_MSG("Connection established.\n");
            //if ((input_buffer == NULL) ||
            //    (input_buffer_length < (FIELD_OFFSET(USER_RESPONSE, operation_id) +
            //        sizeof(USER_RESPONSE)))) {
@@ -280,7 +280,7 @@ NTSTATUS message_notify_callback(
 
            //}
 
-           //ExFreePoolWithTag(replied_operation, PENDING_OPERATION_TAG);
+           //ExFreePool2(replied_operation, PENDING_OPERATION_TAG, NULL, 0);
 
             return STATUS_SUCCESS;
         } break;

@@ -95,7 +95,7 @@ BOOLEAN test_leaf_matches_invalid_params_fam()
         test_free_leaf(lf);
     }
 
-    DbgPrint("[INFO] Test 1: all reachable invalid-parameter gates return FALSE (FAM)\n");
+    LOG_MSG("[INFO] Test 1: all reachable invalid-parameter gates return FALSE (FAM)\n");
     TEST_END("leaf_matches (FAM): invalid parameter gates");
     return TRUE;
 }
@@ -136,7 +136,7 @@ BOOLEAN test_leaf_matches_length_mismatch_fam()
         test_free_leaf(lf);
     }
 
-    DbgPrint("[INFO] Test 2: length mismatches correctly rejected (FAM)\n");
+    LOG_MSG("[INFO] Test 2: length mismatches correctly rejected (FAM)\n");
     TEST_END("leaf_matches (FAM): length mismatch");
     return TRUE;
 }
@@ -189,11 +189,11 @@ BOOLEAN test_leaf_matches_exact_matches_fam()
         BOOLEAN ok = leaf_matches(lf, buf, len);
         TEST_ASSERT(ok == TRUE, "3.3: boundary-sized exact match -> TRUE");
 
-        ExFreePoolWithTag(buf, ART_TAG);
+        ExFreePool2(buf, ART_TAG, NULL, 0);
         test_free_leaf(lf);
     }
 
-    DbgPrint("[INFO] Test 3: exact match scenarios succeed (FAM)\n");
+    LOG_MSG("[INFO] Test 3: exact match scenarios succeed (FAM)\n");
     TEST_END("leaf_matches (FAM): exact matches");
     return TRUE;
 }
@@ -247,7 +247,7 @@ BOOLEAN test_leaf_matches_byte_mismatches_fam()
         test_free_leaf(lf);
     }
 
-    DbgPrint("[INFO] Test 4: any byte mismatch correctly returns FALSE (FAM)\n");
+    LOG_MSG("[INFO] Test 4: any byte mismatch correctly returns FALSE (FAM)\n");
     TEST_END("leaf_matches (FAM): byte-level mismatches");
     return TRUE;
 }
@@ -289,12 +289,12 @@ BOOLEAN test_leaf_matches_sequence_sweep_fam()
             TEST_ASSERT(ok == FALSE, "5.L.2: single-byte flip -> FALSE");
         }
 
-        ExFreePoolWithTag(a, ART_TAG);
-        ExFreePoolWithTag(b, ART_TAG);
+        ExFreePool2(a, ART_TAG, NULL, 0);
+        ExFreePool2(b, ART_TAG, NULL, 0);
         test_free_leaf(lf);
     }
 
-    DbgPrint("[INFO] Test 5: sweep over 1..32 passed (FAM)\n");
+    LOG_MSG("[INFO] Test 5: sweep over 1..32 passed (FAM)\n");
     TEST_END("leaf_matches (FAM): sequence sweep 1..32");
     return TRUE;
 }
@@ -304,9 +304,9 @@ BOOLEAN test_leaf_matches_sequence_sweep_fam()
    ===================================================================== */
 NTSTATUS run_all_leaf_matches_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting leaf_matches (FAM) Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting leaf_matches (FAM) Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all_passed = TRUE;
 
@@ -316,14 +316,14 @@ NTSTATUS run_all_leaf_matches_tests()
     if (!test_leaf_matches_byte_mismatches_fam())       all_passed = FALSE;
     if (!test_leaf_matches_sequence_sweep_fam())        all_passed = FALSE;
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all_passed) {
-        DbgPrint("ALL leaf_matches (FAM) TESTS PASSED! \n");
+        LOG_MSG("ALL leaf_matches (FAM) TESTS PASSED! \n");
     }
     else {
-        DbgPrint("SOME leaf_matches (FAM) TESTS FAILED! \n");
+        LOG_MSG("SOME leaf_matches (FAM) TESTS FAILED! \n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

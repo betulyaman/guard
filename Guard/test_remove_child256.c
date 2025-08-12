@@ -30,7 +30,7 @@ static ART_NODE256* t_make_node256_with_children_count(USHORT count, UCHAR start
                     n256->children[j] = NULL;
                 }
             }
-            ExFreePoolWithTag(n256, ART_TAG);
+            ExFreePool2(n256, ART_TAG, NULL, 0);
             return NULL;
         }
         if (out_leaves && i < out_leaves_cap) out_leaves[i] = lf;
@@ -271,7 +271,7 @@ BOOLEAN test_remove_child256_branches_documentation()
     // - copy_header failure path would require hooking or fault injection on copy_header;
     //   we intentionally skip it here. Allocation failure rollback (Test 5) already
     //   exercises the rollback machinery meaningfully.
-    DbgPrint("[INFO] Skipping copy_header-failure path (would require FI/hook).\n");
+    LOG_MSG("[INFO] Skipping copy_header-failure path (would require FI/hook).\n");
 
     TEST_END("remove_child256: branches needing FI (documentation)");
     return TRUE;
@@ -335,9 +335,9 @@ BOOLEAN test_remove_child256_resize_count_mismatch_rollback()
 // ===============================================================
 NTSTATUS run_all_remove_child256_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting remove_child256() Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting remove_child256() Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all = TRUE;
 
@@ -350,14 +350,14 @@ NTSTATUS run_all_remove_child256_tests()
     if (!test_remove_child256_resize_count_mismatch_rollback())     all = FALSE; // X
 
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all) {
-        DbgPrint("ALL remove_child256() TESTS PASSED!\n");
+        LOG_MSG("ALL remove_child256() TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME remove_child256() TESTS FAILED!\n");
+        LOG_MSG("SOME remove_child256() TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

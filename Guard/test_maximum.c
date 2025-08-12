@@ -362,9 +362,9 @@ BOOLEAN test_maximum_no_allocfree_sideeffects()
    ========================================================= */
 NTSTATUS run_all_maximum_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting maximum() Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting maximum() Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all_passed = TRUE;
 
@@ -378,14 +378,14 @@ NTSTATUS run_all_maximum_tests()
     if (!test_maximum_multilevel_recursion())       all_passed = FALSE;  // 8
     if (!test_maximum_no_allocfree_sideeffects())   all_passed = FALSE;  // 9
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all_passed) {
-        DbgPrint("ALL maximum() TESTS PASSED!\n");
+        LOG_MSG("ALL maximum() TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME maximum() TESTS FAILED!\n");
+        LOG_MSG("SOME maximum() TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

@@ -313,9 +313,9 @@ BOOLEAN test_add_child_dispatch_node4_expand_updates_ref()
    ========================================================= */
 NTSTATUS run_all_add_child_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting add_child() Dispatcher Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting add_child() Dispatcher Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all_passed = TRUE;
 
@@ -329,14 +329,14 @@ NTSTATUS run_all_add_child_tests()
     if (!test_add_child_dispatch_node256_collision())      all_passed = FALSE; // 8
     if (!test_add_child_dispatch_node4_expand_updates_ref()) all_passed = FALSE; // 9
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all_passed) {
-        DbgPrint("ALL add_child() DISPATCH TESTS PASSED!\n");
+        LOG_MSG("ALL add_child() DISPATCH TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME add_child() DISPATCH TESTS FAILED!\n");
+        LOG_MSG("SOME add_child() DISPATCH TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

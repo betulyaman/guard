@@ -32,7 +32,7 @@ NTSTATUS verify_HMAC_SHA256_signature(
         BCRYPT_ALG_HANDLE_HMAC_FLAG
     );
     if (!NT_SUCCESS(status)) {
-        DbgPrint("BCryptOpenAlgorithmProvider failed: 0x%08X\n", status);
+        LOG_MSG("BCryptOpenAlgorithmProvider failed: 0x%08X\n", status);
         return status;
     }
 
@@ -48,7 +48,7 @@ NTSTATUS verify_HMAC_SHA256_signature(
         0
     );
     if (!NT_SUCCESS(status)) {
-        DbgPrint("BCryptGetProperty failed: 0x%08X\n", status);
+        LOG_MSG("BCryptGetProperty failed: 0x%08X\n", status);
         BCryptCloseAlgorithmProvider(hmac_sha256_handle, 0);
         return status;
     }
@@ -74,8 +74,8 @@ NTSTATUS verify_HMAC_SHA256_signature(
         0
     );
     if (!NT_SUCCESS(status)) {
-        DbgPrint("BCryptCreateHash failed: 0x%08X\n", status);
-        ExFreePoolWithTag(hash_object, HASH_OBJECT_TAG);
+        LOG_MSG("BCryptCreateHash failed: 0x%08X\n", status);
+        ExFreePool2(hash_object, HASH_OBJECT_TAG, NULL, 0);
         BCryptCloseAlgorithmProvider(hmac_sha256_handle, 0);
         return status;
     }
@@ -88,9 +88,9 @@ NTSTATUS verify_HMAC_SHA256_signature(
         0
     );
     if (!NT_SUCCESS(status)) {
-        DbgPrint("BCryptHashData failed: 0x%08X\n", status);
+        LOG_MSG("BCryptHashData failed: 0x%08X\n", status);
         BCryptDestroyHash(hash_handle);
-        ExFreePoolWithTag(hash_object, HASH_OBJECT_TAG);
+        ExFreePool2(hash_object, HASH_OBJECT_TAG, NULL, 0);
         BCryptCloseAlgorithmProvider(hmac_sha256_handle, 0);
         return status;
     }
@@ -105,9 +105,9 @@ NTSTATUS verify_HMAC_SHA256_signature(
         0
     );
     if (!NT_SUCCESS(status)) {
-        DbgPrint("BCryptFinishash_handle failed: 0x%08X\n", status);
+        LOG_MSG("BCryptFinishash_handle failed: 0x%08X\n", status);
         BCryptDestroyHash(hash_handle);
-        ExFreePoolWithTag(hash_object, HASH_OBJECT_TAG);
+        ExFreePool2(hash_object, HASH_OBJECT_TAG, NULL, 0);
         BCryptCloseAlgorithmProvider(hmac_sha256_handle, 0);
         return status;
     }
@@ -122,11 +122,11 @@ NTSTATUS verify_HMAC_SHA256_signature(
     }
     if (!equal) {
         status = STATUS_ACCESS_DENIED;
-        DbgPrint("HMAC Signature verification failed.\n");
+        LOG_MSG("HMAC Signature verification failed.\n");
     }
     else {
         status = STATUS_SUCCESS;
-        DbgPrint("HMAC Signature verification succeeded.\n");
+        LOG_MSG("HMAC Signature verification succeeded.\n");
     }
 
     return status;

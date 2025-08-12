@@ -3,20 +3,6 @@
 // Function under test
 STATIC ART_LEAF* make_leaf(CONST PUCHAR key, USHORT key_length, ULONG value);
 
-// -----------------------------
-// Tiny helpers
-// -----------------------------
-
-static __forceinline USHORT over_keylen(void) {
-#if defined(MAX_KEY_LENGTH)
-    // If MAX_KEY_LENGTH fits in USHORT, use MAX_KEY_LENGTH+1; otherwise clamp to USHRT_MAX.
-    return (USHORT)((MAX_KEY_LENGTH < USHRT_MAX) ? (MAX_KEY_LENGTH + 1U) : USHRT_MAX);
-#else
-    // If MAX_KEY_LENGTH isn't defined, just use the largest USHORT so the guard path triggers.
-    return (USHORT)USHRT_MAX;
-#endif
-}
-
 static PUCHAR test_alloc_key_buf(USHORT len, UCHAR base)
 {
     if (len == 0) return NULL;
@@ -54,7 +40,7 @@ BOOLEAN test_make_leaf_param_validation()
     // (1.2) length > MAX_KEY_LENGTH (guarded at compile-time to avoid truncation warnings)
     reset_mock_state();
     {
-#if (MAX_KEY_LENGTH < USHRT_MAX)
+#if (MAX_KEY_LENGTH < MAXUSHORT)
         ULONG a0 = g_alloc_call_count, f0 = g_free_call_count; // only defined when used
         UCHAR dummy = 0xAB;
         const USHORT too_long = (USHORT)(MAX_KEY_LENGTH + 1u); // safe: representable in USHORT under #if
@@ -62,7 +48,7 @@ BOOLEAN test_make_leaf_param_validation()
         TEST_ASSERT(lf == NULL, "1.2: key_length beyond MAX_KEY_LENGTH must fail");
         TEST_ASSERT(g_alloc_call_count == a0 && g_free_call_count == f0, "1.2: no alloc/free on guard fail");
 #else
-        DbgPrint("[SKIP] 1.2: MAX_KEY_LENGTH == USHRT_MAX; cannot form len > MAX_KEY_LENGTH in USHORT param\n");
+        LOG_MSG("[SKIP] 1.2: MAX_KEY_LENGTH == MAXUSHORT; cannot form len > MAX_KEY_LENGTH in USHORT param\n");
 #endif
     }
 
@@ -77,7 +63,7 @@ BOOLEAN test_make_leaf_param_validation()
             TEST_ASSERT(lf->value == 0x33333333, "1.3: value must be preserved");
             TEST_ASSERT(g_alloc_call_count == a0 + 1, "1.3: one allocation for leaf");
             TEST_ASSERT(g_free_call_count == f0, "1.3: no free inside on success");
-            ExFreePoolWithTag(lf, ART_TAG);
+            ExFreePool2(lf, ART_TAG, NULL, 0);
         }
     }
 
@@ -99,7 +85,7 @@ BOOLEAN test_make_leaf_allocation_failure()
     // 1) Allocate the input key buffer first (this must succeed)
     PUCHAR key = test_alloc_key_buf(8, 0x10);
     if (!key) {
-        DbgPrint("[TEST SKIP] input key buffer alloc failed\n");
+        LOG_MSG("[TEST SKIP] input key buffer alloc failed\n");
         TEST_END("make_leaf: allocation failure path");
         return TRUE;
     }
@@ -115,7 +101,7 @@ BOOLEAN test_make_leaf_allocation_failure()
     TEST_ASSERT(g_free_call_count == f0, "2.1: no frees should occur inside on alloc fail");
 
     // 3) Cleanup + restore mock knobs
-    ExFreePoolWithTag(key, ART_TAG);
+    ExFreePool2(key, ART_TAG, NULL, 0);
     configure_mock_failure(STATUS_SUCCESS, STATUS_SUCCESS, FALSE, 0);
 
     TEST_END("make_leaf: allocation failure path");
@@ -148,10 +134,10 @@ BOOLEAN test_make_leaf_small_key_success()
         TEST_ASSERT(test_mem_eq(lf->key, key, len), "3.1: key bytes must be copied exactly");
         TEST_ASSERT(g_alloc_call_count == a0 + 1, "3.1: exactly one allocation for leaf");
         TEST_ASSERT(g_free_call_count == f0, "3.1: no free inside on success");
-        ExFreePoolWithTag(lf, ART_TAG);
+        ExFreePool2(lf, ART_TAG, NULL, 0);
     }
 
-    ExFreePoolWithTag(key, ART_TAG);
+    ExFreePool2(key, ART_TAG, NULL, 0);
 
     TEST_END("make_leaf: small key success");
     return TRUE;
@@ -179,10 +165,10 @@ BOOLEAN test_make_leaf_zero_length_with_pointer()
         TEST_ASSERT(lf->value == 0x01020304, "4.1: value must be preserved");
         TEST_ASSERT(g_alloc_call_count == a0 + 1, "4.1: one allocation");
         TEST_ASSERT(g_free_call_count == f0, "4.1: no free inside");
-        ExFreePoolWithTag(lf, ART_TAG);
+        ExFreePool2(lf, ART_TAG, NULL, 0);
     }
 
-    ExFreePoolWithTag(dummy, ART_TAG);
+    ExFreePool2(dummy, ART_TAG, NULL, 0);
 
     TEST_END("make_leaf: zero-length key with non-NULL pointer");
     return TRUE;
@@ -203,7 +189,7 @@ BOOLEAN test_make_leaf_max_boundary_success()
     USHORT len = (USHORT)MAX_KEY_LENGTH;
     PUCHAR key = test_alloc_key_buf(len, 0x80);
     if (!key) {
-        DbgPrint("[TEST SKIP] could not allocate input buffer for boundary test\n");
+        LOG_MSG("[TEST SKIP] could not allocate input buffer for boundary test\n");
         TEST_END("make_leaf: MAX_KEY_LENGTH boundary");
         return TRUE;
     }
@@ -217,10 +203,10 @@ BOOLEAN test_make_leaf_max_boundary_success()
         TEST_ASSERT(test_mem_eq(lf->key, key, len), "5.1: all bytes must be copied");
         TEST_ASSERT(g_alloc_call_count == a0 + 1, "5.1: one allocation");
         TEST_ASSERT(g_free_call_count == f0, "5.1: no free inside");
-        ExFreePoolWithTag(lf, ART_TAG);
+        ExFreePool2(lf, ART_TAG, NULL, 0);
     }
 
-    ExFreePoolWithTag(key, ART_TAG);
+    ExFreePool2(key, ART_TAG, NULL, 0);;
 
     TEST_END("make_leaf: MAX_KEY_LENGTH boundary");
     return TRUE;
@@ -240,7 +226,10 @@ BOOLEAN test_make_leaf_exceed_max_length()
     UCHAR some = 0x11;
     ULONG a0 = g_alloc_call_count, f0 = g_free_call_count;
 
-    USHORT too_long = over_keylen();
+    // Produce an “exceed” length without truncation warnings:
+    // If +1 fits in USHORT, use it; otherwise use MAXUSHORT as a sentinel.
+    USHORT too_long = MAXUSHORT;
+
     ART_LEAF* lf = make_leaf(&some, too_long, 0xAAAAAAAA);
 
     TEST_ASSERT(lf == NULL, "6.1: exceeding max must fail");
@@ -250,6 +239,7 @@ BOOLEAN test_make_leaf_exceed_max_length()
     TEST_END("make_leaf: exceeding MAX_KEY_LENGTH");
     return TRUE;
 }
+
 
 /* =========================================================
    Test 7: Stress — varied lengths including 0
@@ -272,7 +262,7 @@ BOOLEAN test_make_leaf_stress_mixed_lengths()
         USHORT len = cases[i];
         inputs[i] = (len == 0) ? NULL : test_alloc_key_buf(len, (UCHAR)(0x30 + (UCHAR)i));
         if (len > 0 && !inputs[i]) {
-            DbgPrint("[TEST SKIP] stress: failed to alloc input length %u\n", len);
+            LOG_MSG("[TEST SKIP] stress: failed to alloc input length %u\n", len);
             continue;
         }
         created[i] = make_leaf(inputs[i], len, 0x12340000u + i);
@@ -288,8 +278,8 @@ BOOLEAN test_make_leaf_stress_mixed_lengths()
 
     // cleanup
     for (ULONG i = 0; i < RTL_NUMBER_OF(cases); ++i) {
-        if (created[i]) ExFreePoolWithTag(created[i], ART_TAG);
-        if (inputs[i])  ExFreePoolWithTag(inputs[i], ART_TAG);
+        if (created[i]) ExFreePool2(created[i], ART_TAG, NULL, 0);
+        if (inputs[i])  ExFreePool2(inputs[i], ART_TAG, NULL, 0);
     }
 
     TEST_END("make_leaf: stress mixed lengths");
@@ -301,9 +291,9 @@ BOOLEAN test_make_leaf_stress_mixed_lengths()
    ========================================================= */
 NTSTATUS run_all_make_leaf_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting make_leaf() Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting make_leaf() Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all_passed = TRUE;
 
@@ -315,14 +305,14 @@ NTSTATUS run_all_make_leaf_tests()
     if (!test_make_leaf_exceed_max_length())        all_passed = FALSE; // 6
     if (!test_make_leaf_stress_mixed_lengths())     all_passed = FALSE; // 7
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all_passed) {
-        DbgPrint("ALL make_leaf() TESTS PASSED! \n");
+        LOG_MSG("ALL make_leaf() TESTS PASSED! \n");
     }
     else {
-        DbgPrint("SOME make_leaf() TESTS FAILED! \n");
+        LOG_MSG("SOME make_leaf() TESTS FAILED! \n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

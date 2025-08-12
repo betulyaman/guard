@@ -9,7 +9,7 @@ STATIC ART_NODE* art_create_node(NODE_TYPE type);
 static VOID test_free_node_if_any(ART_NODE* n)
 {
     if (n) {
-        Test_ExFreePoolWithTag(n, ART_TAG);
+        Test_ExFreePool2(n, ART_TAG, NULL, 0);
     }
 }
 
@@ -46,7 +46,7 @@ BOOLEAN test_art_create_node_invalid_type()
         TEST_ASSERT(g_last_allocated_pointer == NULL, "1.3: No last allocation recorded for invalid type");
     }
 
-    DbgPrint("[INFO] Test 1 done: invalid types are safely rejected without allocations\n");
+    LOG_MSG("[INFO] Test 1 done: invalid types are safely rejected without allocations\n");
 
     TEST_END("art_create_node: Invalid Type Handling");
     return TRUE;
@@ -85,7 +85,7 @@ BOOLEAN test_art_create_node_valid_types_basic()
 
     for (ULONG i = 0; i < RTL_NUMBER_OF(cases); ++i) {
         reset_mock_state();
-        DbgPrint("[INFO] Test 2.%lu starting for %s\n", (ULONG)(i + 1), cases[i].name);
+        LOG_MSG("[INFO] Test 2.%lu starting for %s\n", (ULONG)(i + 1), cases[i].name);
 
         ART_NODE* node = art_create_node(cases[i].t);
 
@@ -109,7 +109,7 @@ BOOLEAN test_art_create_node_valid_types_basic()
         TEST_ASSERT(g_free_call_count == frees_before + 1, "2.x.8: Cleanup must free exactly once");
     }
 
-    DbgPrint("[INFO] Test 2 done: all valid node types allocate correct sizes and zero fields\n");
+    LOG_MSG("[INFO] Test 2 done: all valid node types allocate correct sizes and zero fields\n");
 
     TEST_END("art_create_node: Valid Types (Size/Fields/Tag)");
     return TRUE;
@@ -147,7 +147,7 @@ BOOLEAN test_art_create_node_allocation_failure()
     // Reset knobs for subsequent tests
     reset_mock_state();
 
-    DbgPrint("[INFO] Test 3 done: allocation failure is handled cleanly\n");
+    LOG_MSG("[INFO] Test 3 done: allocation failure is handled cleanly\n");
 
     TEST_END("art_create_node: Allocation Failure Path");
     return TRUE;
@@ -193,7 +193,7 @@ BOOLEAN test_art_create_node_stress_many()
                 TEST_ASSERT(n->num_of_child == 0, "4.2: num_of_child zero-initialized");
             }
             else {
-                DbgPrint("[INFO] Stress alloc failed at typeIndex=%lu iter=%d (acceptable)\n", t, i);
+                LOG_MSG("[INFO] Stress alloc failed at typeIndex=%lu iter=%d (acceptable)\n", t, i);
             }
         }
     }
@@ -206,7 +206,7 @@ BOOLEAN test_art_create_node_stress_many()
     TEST_ASSERT(g_free_call_count == frees_before + (ULONG)created_count,
         "4.3: All successfully allocated nodes must be freed");
 
-    DbgPrint("[INFO] Test 4 done: stress allocations/frees consistent (created=%d)\n", created_count);
+    LOG_MSG("[INFO] Test 4 done: stress allocations/frees consistent (created=%d)\n", created_count);
 
     TEST_END("art_create_node: Stress (Many Allocations)");
     return TRUE;
@@ -241,7 +241,7 @@ BOOLEAN test_art_create_node_zero_init_observables()
         test_free_node_if_any(n);
     }
 
-    DbgPrint("[INFO] Test 5 done: observable fields consistently zero-initialized\n");
+    LOG_MSG("[INFO] Test 5 done: observable fields consistently zero-initialized\n");
 
     TEST_END("art_create_node: Zero-Initialization (Observables)");
     return TRUE;
@@ -276,7 +276,7 @@ BOOLEAN test_art_create_node_size_guard_nonzero_for_valid()
     test_free_node_if_any(n3);
     test_free_node_if_any(n4);
 
-    DbgPrint("[INFO] Test 6 done: size guard is effectively validated via success paths\n");
+    LOG_MSG("[INFO] Test 6 done: size guard is effectively validated via success paths\n");
 
     TEST_END("art_create_node: Size Guard (Non-zero for Valid Types)");
     return TRUE;
@@ -287,9 +287,9 @@ BOOLEAN test_art_create_node_size_guard_nonzero_for_valid()
    ========================================================= */
 NTSTATUS run_all_art_create_node_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting art_create_node Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting art_create_node Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all_passed = TRUE;
 
@@ -300,14 +300,14 @@ NTSTATUS run_all_art_create_node_tests()
     if (!test_art_create_node_zero_init_observables())        all_passed = FALSE;
     if (!test_art_create_node_size_guard_nonzero_for_valid()) all_passed = FALSE;
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all_passed) {
-        DbgPrint("ALL art_create_node TESTS PASSED!\n");
+        LOG_MSG("ALL art_create_node TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME art_create_node TESTS FAILED!\n");
+        LOG_MSG("SOME art_create_node TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

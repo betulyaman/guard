@@ -438,9 +438,9 @@ BOOLEAN test_ads_fallback_on_overflow_success()
 // ===============================
 NTSTATUS run_all_art_delete_subtree_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting art_delete_subtree() Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting art_delete_subtree() Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all = TRUE;
 
@@ -454,14 +454,14 @@ NTSTATUS run_all_art_delete_subtree_tests()
     if (!test_ads_delete_internal_subtree_node256_parent()) all = FALSE; // (9)
     if (!test_ads_fallback_on_overflow_success())           all = FALSE; // (10)
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all) {
-        DbgPrint("ALL art_delete_subtree() TESTS PASSED!\n");
+        LOG_MSG("ALL art_delete_subtree() TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME art_delete_subtree() TESTS FAILED!\n");
+        LOG_MSG("SOME art_delete_subtree() TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

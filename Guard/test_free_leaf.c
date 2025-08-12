@@ -5,7 +5,7 @@ STATIC inline VOID free_leaf(_Inout_ ART_LEAF** leaf);
 
 // Mock captures (provided by the shared header/mocks)
 
-extern USHORT g_last_freed_leaf_keylen_before_free; // captured before ExFreePoolWithTag
+extern USHORT g_last_freed_leaf_keylen_before_free; // captured before ExFreePool2
 extern ULONG  g_debugbreak_count;                   // __debugbreak() hit counter (DEBUG path)
 
 /*========================================================
@@ -108,7 +108,7 @@ BOOLEAN test_free_leaf_double_free_detection_path()
     // simulate "already poisoned" leaf (as if double-free)
     ART_LEAF* lf = test_alloc_leaf((USHORT)8, 0x00); // FIX: allocate normal size
     TEST_ASSERT(lf != NULL, "Leaf allocation succeeded");
-    lf->key_length = LEAF_FREED_MAGIC; // FIX: poison after allocation
+    lf->key_length = LEAF_FREED_MAGIC; //poison after allocation
     ART_LEAF** plf = &lf;
 
     free_leaf(plf);
@@ -150,8 +150,14 @@ BOOLEAN test_free_leaf_bulk_reverse_order()
 
     TEST_ASSERT(g_free_call_count == (ULONG)allocs, "Free count must match allocations");
 
-    TEST_ASSERT(g_last_freed_leaf_keylen_before_free == LEAF_FREED_MAGIC,
-        "Last freed leaf observed poisoned before free");
+    if (ART_ENABLE_POISON_ON_FREE) {
+        TEST_ASSERT(g_last_freed_leaf_keylen_before_free == LEAF_FREED_MAGIC,
+            "Last freed leaf observed poisoned before free");
+    }
+    else {
+        // Either skip, or assert the non-poisoned observation:
+        // TEST_ASSERT(g_last_freed_leaf_keylen_before_free != LEAF_FREED_MAGIC, "..."); 
+    }
 
     for (int i = 0; i < N; ++i) {
         TEST_ASSERT(*addrs[i] == NULL, "Each pointer must be NULL after free");
@@ -180,14 +186,14 @@ BOOLEAN test_free_leaf_stress_many_cycles()
             if (*plf == NULL) ++freed;
         }
         else {
-            DbgPrint("[INFO] Allocation failed at iteration %d (expected under stress)\n", i);
+            LOG_MSG("[INFO] Allocation failed at iteration %d (expected under stress)\n", i);
         }
     }
 
 
     TEST_ASSERT(g_free_call_count == (ULONG)freed, "All successfully allocated leaves must be freed");
 
-    DbgPrint("[INFO] Stress completed: freed %d/%d\n", freed, ITER);
+    LOG_MSG("[INFO] Stress completed: freed %d/%d\n", freed, ITER);
 
     TEST_END("free_leaf: stress many cycles");
     return TRUE;
@@ -204,15 +210,15 @@ BOOLEAN test_free_leaf_logging_visual()
     for (int i = 0; i < 3; ++i) {
         ART_LEAF* lf = test_alloc_leaf((USHORT)(200 + i), 0xA0); // FIX: add start_val
         if (lf) {
-            DbgPrint("[TEST] about to free leaf #%d at %p (key_length=%hu) — expect LOG_MSG\n",
+            LOG_MSG("[TEST] about to free leaf #%d at %p (key_length=%hu) — expect LOG_MSG\n",
                 i, lf, lf->key_length);
             ART_LEAF** plf = &lf;
             free_leaf(plf);
-            DbgPrint("[TEST] free_leaf returned for leaf #%d\n", i);
+            LOG_MSG("[TEST] free_leaf returned for leaf #%d\n", i);
         }
     }
 
-    DbgPrint("[INFO] Logging verification completed (check output ordering)\n");
+    LOG_MSG("[INFO] Logging verification completed (check output ordering)\n");
     TEST_END("free_leaf: logging (visual)");
     return TRUE;
 }
@@ -249,9 +255,9 @@ BOOLEAN test_free_leaf_pointer_isolation()
 ========================================================*/
 NTSTATUS run_all_free_leaf_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting Comprehensive free_leaf Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting Comprehensive free_leaf Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all_passed = TRUE;
 
@@ -264,14 +270,14 @@ NTSTATUS run_all_free_leaf_tests()
     if (!test_free_leaf_logging_visual())                all_passed = FALSE;
     if (!test_free_leaf_pointer_isolation())             all_passed = FALSE;
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all_passed) {
-        DbgPrint("ALL free_leaf TESTS PASSED! \n");
+        LOG_MSG("ALL free_leaf TESTS PASSED! \n");
     }
     else {
-        DbgPrint("SOME free_leaf TESTS FAILED! \n");
+        LOG_MSG("SOME free_leaf TESTS FAILED! \n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "adaptive_radix_tree.h"
+#include "log.h"
 
 //-------------------------------------------------------
 // Test framework macros
@@ -7,18 +8,16 @@
 #define TEST_ASSERT(condition, message) \
     do { \
         if (!(condition)) { \
-            DbgPrint("[TEST FAILED] %s: %s\n", __FUNCTION__, message); \
+            LOG_MSG("[TEST FAILED] %s: %s\n", __FUNCTION__, message); \
             return FALSE; \
-        } else { \
-            DbgPrint("[TEST PASSED] %s: %s\n", __FUNCTION__, message); \
-        } \
+        }\
     } while(0)
 
-#define TEST_START(test_name) \
-    DbgPrint("\n=== Starting Test: %s ===\n", test_name)
+#define TEST_START(test_name) //\
+    LOG_MSG("\n=== Starting Test: %s ===\n", test_name)
 
-#define TEST_END(test_name) \
-    DbgPrint("=== Test %s Completed ===\n\n", test_name)
+#define TEST_END(test_name) //\
+    LOG_MSG("=== Test %s Completed ===\n\n", test_name)
 
 //-------------------------------------------------------
 // Mock/Test state (extern)
@@ -53,7 +52,7 @@ extern USHORT  g_last_freed_leaf_keylen_before_free;
 // UNIT_TEST tanımlı iken yapılmalı.
 //-------------------------------------------------------
 PVOID Test_ExAllocatePool2(ULONG PoolFlags, SIZE_T NumberOfBytes, ULONG Tag);
-VOID  Test_ExFreePoolWithTag(PVOID P, ULONG Tag);
+VOID  Test_ExFreePool2(PVOID P, ULONG Tag, PCPOOL_EXTENDED_PARAMETER ExtendedParameters, ULONG ExtendedParametersCount);
 
 NTSTATUS Test_RtlDowncaseUnicodeString(
     PUNICODE_STRING DestinationString,

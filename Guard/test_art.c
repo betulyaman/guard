@@ -5,8 +5,8 @@
 #ifdef ExAllocatePool2
 #undef ExAllocatePool2
 #endif
-#ifdef ExFreePoolWithTag
-#undef ExFreePoolWithTag
+#ifdef ExFreePool2
+#undef ExFreePool2
 #endif
 #ifdef RtlDowncaseUnicodeString
 #undef RtlDowncaseUnicodeString
@@ -83,7 +83,7 @@ PVOID Test_ExAllocatePool2(ULONG PoolFlags, SIZE_T NumberOfBytes, ULONG Tag)
     g_alloc_call_count++;
 
     if (g_simulate_alloc_failure && g_alloc_call_count > g_alloc_failure_after_count) {
-        DbgPrint("[TEST MOCK] ExAllocatePool2 simulating failure (call #%lu)\n", g_alloc_call_count);
+        // LOG_MSG("[TEST MOCK] ExAllocatePool2 simulating failure (call #%lu)\n", g_alloc_call_count);
         return NULL;
     }
 
@@ -95,40 +95,22 @@ PVOID Test_ExAllocatePool2(ULONG PoolFlags, SIZE_T NumberOfBytes, ULONG Tag)
     PVOID ptr = ExAllocatePool2(PoolFlags, NumberOfBytes, Tag);
     g_last_allocated_pointer = ptr;
 
-    DbgPrint("[TEST MOCK] ExAllocatePool2 called: Size=%Iu, Tag=0x%08X, Result=%p\n", (size_t)NumberOfBytes, Tag, ptr);
+    // LOG_MSG("[TEST MOCK] ExAllocatePool2 called: Size=%Iu, Tag=0x%08X, Result=%p\n", (size_t)NumberOfBytes, Tag, ptr);
 
     return ptr;
 }
 
-VOID Test_ExFreePoolWithTag(PVOID P, ULONG Tag)
+VOID Test_ExFreePool2(PVOID P, ULONG Tag, PCPOOL_EXTENDED_PARAMETER ExtendedParameters, ULONG ExtendedParametersCount)
 {
     g_free_call_count++;
     g_last_freed_pointer = P;
     g_last_freed_tag = Tag;
 
-    if (P) {
-        __try {
-            // existing: capture node->type
-            g_last_freed_node_type_before_free = ((ART_NODE*)P)->type;
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER) {
-            g_last_freed_node_type_before_free = 0xEE;
-        }
-
-        __try {
-            // NEW: capture leaf->key_length
-            g_last_freed_leaf_keylen_before_free = ((ART_LEAF*)P)->key_length;
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER) {
-            g_last_freed_leaf_keylen_before_free = 0xEEEE;
-        }
-    }
-
-    DbgPrint("[TEST MOCK] ExFreePoolWithTag called with P=%p, Tag=0x%08X\n", P, Tag);
+    // LOG_MSG("[TEST MOCK] ExFreePool2 called with P=%p, Tag=0x%08X\n", P, Tag);
 
     // Actually free the memory
     if (P) {
-        ExFreePoolWithTag(P, Tag);
+        ExFreePool2(P, Tag, ExtendedParameters, ExtendedParametersCount);
     }
 }
 
@@ -137,11 +119,10 @@ NTSTATUS Test_RtlDowncaseUnicodeString(PUNICODE_STRING DestinationString,
     BOOLEAN AllocateDestinationString)
 {
     g_downcase_call_count++;
-    DbgPrint("[TEST MOCK] RtlDowncaseUnicodeString called (call #%lu)\n", g_downcase_call_count);
+    // LOG_MSG("[TEST MOCK] RtlDowncaseUnicodeString called (call #%lu)\n", g_downcase_call_count);
 
     if (!NT_SUCCESS(g_mock_downcase_return)) {
-        DbgPrint("[TEST MOCK] RtlDowncaseUnicodeString returning mock failure: 0x%x\n",
-            g_mock_downcase_return);
+        // LOG_MSG("[TEST MOCK] RtlDowncaseUnicodeString returning mock failure: 0x%x\n",g_mock_downcase_return);
         return g_mock_downcase_return;
     }
 
@@ -156,11 +137,10 @@ NTSTATUS Test_RtlUnicodeToUTF8N(PCHAR UTF8StringDestination,
     ULONG UnicodeStringByteCount)
 {
     g_unicode_to_utf8_call_count++;
-    DbgPrint("[TEST MOCK] RtlUnicodeToUTF8N called (call #%lu)\n", g_unicode_to_utf8_call_count);
+    // LOG_MSG("[TEST MOCK] RtlUnicodeToUTF8N called (call #%lu)\n", g_unicode_to_utf8_call_count);
 
     if (!NT_SUCCESS(g_mock_unicode_to_utf8_return)) {
-        DbgPrint("[TEST MOCK] RtlUnicodeToUTF8N returning mock failure: 0x%x\n",
-            g_mock_unicode_to_utf8_return);
+        // LOG_MSG("[TEST MOCK] RtlUnicodeToUTF8N returning mock failure: 0x%x\n", g_mock_unicode_to_utf8_return);
         return g_mock_unicode_to_utf8_return;
     }
 
@@ -209,14 +189,14 @@ void configure_mock_failure(NTSTATUS downcase_status, NTSTATUS utf8_status, BOOL
 VOID Test_DebugBreak(VOID)
 {
     g_debugbreak_count++;
-    DbgPrint("[TEST MOCK] __debugbreak() hit\n");
+    LOG_MSG("[TEST MOCK] __debugbreak() hit\n");
 }
 
 // Helper function to cleanup Unicode string
 void cleanup_unicode_string(UNICODE_STRING* str)
 {
     if (str && str->Buffer) {
-        ExFreePoolWithTag(str->Buffer, ART_TAG);
+        ExFreePool2(str->Buffer, ART_TAG, NULL, 0);
         str->Buffer = NULL;
         str->Length = 0;
         str->MaximumLength = 0;
@@ -335,17 +315,17 @@ PUCHAR t_alloc_key(USHORT len, UCHAR start)
 
 VOID t_free(void* p)
 {
-    if (p) ExFreePoolWithTag(p, ART_TAG);
+    if (p) ExFreePool2(p, ART_TAG, NULL, 0);
 }
 
 VOID test_free_leaf(ART_LEAF* lf)
 {
-    if (lf) ExFreePoolWithTag(lf, ART_TAG);
+    if (lf) ExFreePool2(lf, ART_TAG, NULL, 0);
 }
 
 VOID test_free_node_all(void* p)
 {
-    if (p) ExFreePoolWithTag(p, ART_TAG);
+    if (p) ExFreePool2(p, ART_TAG, NULL, 0);
 }
 
 VOID test_free_node_any(ART_NODE* node)
@@ -355,20 +335,20 @@ VOID test_free_node_any(ART_NODE* node)
     switch (node->type)
     {
     case NODE4:
-        ExFreePoolWithTag((ART_NODE4*)node, ART_TAG);
+        ExFreePool2((ART_NODE4*)node, ART_TAG, NULL, 0);
         break;
     case NODE16:
-        ExFreePoolWithTag((ART_NODE16*)node, ART_TAG);
+        ExFreePool2((ART_NODE16*)node, ART_TAG, NULL, 0);
         break;
     case NODE48:
-        ExFreePoolWithTag((ART_NODE48*)node, ART_TAG);
+        ExFreePool2((ART_NODE48*)node, ART_TAG, NULL, 0);
         break;
     case NODE256:
-        ExFreePoolWithTag((ART_NODE256*)node, ART_TAG);
+        ExFreePool2((ART_NODE256*)node, ART_TAG, NULL, 0);
         break;
     default:
         // unknown or dummy node — yine de free et
-        ExFreePoolWithTag(node, ART_TAG);
+        ExFreePool2(node, ART_TAG, NULL, 0);
         break;
     }
 }
@@ -438,7 +418,7 @@ VOID
 ArtTestDriverUnload(_In_ PDRIVER_OBJECT DriverObject)
 {
     UNREFERENCED_PARAMETER(DriverObject);
-    DbgPrint("[ART][TEST] Unload called. Bye!\n");
+    LOG_MSG("[ART][TEST] Unload called. Bye!\n");
 }
 
 // ===== entry =====
@@ -448,9 +428,9 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 
     DriverObject->DriverUnload = ArtTestDriverUnload;
 
-    DbgPrint("\n=================================================\n");
-    DbgPrint(" ART Test Driver — starting all test suites\n");
-    DbgPrint("=================================================\n");
+    LOG_MSG("\n=================================================\n");
+    LOG_MSG(" ART Test Driver — starting all test suites\n");
+    LOG_MSG("=================================================\n");
 
     BOOLEAN all_ok = TRUE;
     NTSTATUS st;
@@ -492,14 +472,14 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
     st = run_all_art_destroy_tree_tests();           if (!NT_SUCCESS(st)) all_ok = FALSE;
     st = run_all_art_search_tests();                 if (!NT_SUCCESS(st)) all_ok = FALSE;
 
-    DbgPrint("\n=================================================\n");
+    LOG_MSG("\n=================================================\n");
     if (all_ok) {
-        DbgPrint(" ART Test Driver — ALL TEST SUITES PASSED \n");
+        LOG_MSG(" ART Test Driver — ALL TEST SUITES PASSED \n");
     }
     else {
-        DbgPrint(" ART Test Driver — SOME TESTS FAILED \n");
+        LOG_MSG(" ART Test Driver — SOME TESTS FAILED \n");
     }
-    DbgPrint("=================================================\n\n");
+    LOG_MSG("=================================================\n\n");
 
     return STATUS_SUCCESS;
 }

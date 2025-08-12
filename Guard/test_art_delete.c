@@ -169,7 +169,7 @@ static NTSTATUS ad_make_unicode(UNICODE_STRING* dst, PCWSTR src, ULONG chars)
 static VOID ad_free_unicode(UNICODE_STRING* s)
 {
     if (s->Buffer) {
-        ExFreePoolWithTag(s->Buffer, ART_TAG);
+        ExFreePool2(s->Buffer, ART_TAG, NULL, 0);
         s->Buffer = NULL;
     }
     s->Length = s->MaximumLength = 0;
@@ -375,7 +375,7 @@ BOOLEAN test_art_delete_rejects_overlong_key()
 {
     TEST_START("art_delete: rejects overlong key (optional)");
 #ifndef MAX_KEY_LENGTH
-    DbgPrint("[INFO] MAX_KEY_LENGTH not defined; skipping.\n");
+    LOG_MSG("[INFO] MAX_KEY_LENGTH not defined; skipping.\n");
     TEST_END("art_delete: rejects overlong key (optional)");
     return TRUE;
 #else
@@ -395,7 +395,7 @@ BOOLEAN test_art_delete_rejects_overlong_key()
         // MAX_KEY_LENGTH == maxL_by_unicode ise Lsz = maxL_by_unicode (eşit) olurdu;
         // bu durumda +1 yapamayız; testin anlamlı olabilmesi için
         // MAX_KEY_LENGTH'i düşürmen gerekir. Burada test'i "skip" edelim.
-        DbgPrint("[INFO] MAX_KEY_LENGTH is too large for UNICODE_STRING; skipping test.\n");
+        LOG_MSG("[INFO] MAX_KEY_LENGTH is too large for UNICODE_STRING; skipping test.\n");
         ad_free_tree(&t.root);
         TEST_END("art_delete: rejects overlong key (optional)");
         return TRUE;
@@ -417,7 +417,7 @@ BOOLEAN test_art_delete_rejects_overlong_key()
     TEST_ASSERT(old == POLICY_NONE, "overlong key -> POLICY_NONE");
     TEST_ASSERT(t.size == 1 && t.root != NULL, "tree unchanged");
 
-    ExFreePoolWithTag(w, ART_TAG);
+    ExFreePool2(w, ART_TAG, NULL, 0);
     ad_free_tree(&t.root);
 
     TEST_END("art_delete: rejects overlong key (optional)");
@@ -431,9 +431,9 @@ BOOLEAN test_art_delete_rejects_overlong_key()
 // ===============================================================
 NTSTATUS run_all_art_delete_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting art_delete() Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting art_delete() Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all = TRUE;
 
@@ -446,14 +446,14 @@ NTSTATUS run_all_art_delete_tests()
     if (!test_art_delete_rejects_overlong_key())      all = FALSE;   // (6) idempotence
 
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all) {
-        DbgPrint("ALL art_delete() TESTS PASSED!\n");
+        LOG_MSG("ALL art_delete() TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME art_delete() TESTS FAILED!\n");
+        LOG_MSG("SOME art_delete() TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

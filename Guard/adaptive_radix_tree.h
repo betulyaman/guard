@@ -4,18 +4,11 @@
 #include "minifilter.h"
 
 #include <fltKernel.h>
+#include <wdm.h>
 
-// Optional test hook flag (defined in tests)
-extern volatile BOOLEAN g_force_alloc_fail;
-
-#ifndef USHRT_MAX
-#define USHRT_MAX 0xFFFF
-#endif
-
-#define MAX_PREFIX_LENGTH 2 // \\device\\harddiskvolumeX
-#define MAX_TREE_DEPTH 25 // Stack overflow protection
-#define MAX_RECURSION_DEPTH 1000
-#define MAX_KEY_LENGTH 65535 // 64KB maximum key length
+#define MAX_PREFIX_LENGTH   23   // \\device\\harddiskvolumeX
+#define MAX_KEY_LENGTH      4096 // 4KB maximum key length
+#define MAX_RECURSION_DEPTH 192  // Stack guard
 
 #define IS_LEAF(x) (((uintptr_t)x & 1))
 #define SET_LEAF(x) ((VOID*)((uintptr_t)x | 1))
@@ -31,10 +24,24 @@ extern volatile BOOLEAN g_force_alloc_fail;
 #define POLICY_MASK_ALL_ACCESS      FILE_ALL_ACCESS // 0x001F01FF
 #define POLICY_MASK_ALL_BUT_DELETE  (FILE_ALL_ACCESS & ~DELETE) // 0x001E01FF
 
+// English comments as you asked
+#ifndef SIZE_T_MAX
+#define SIZE_T_MAX ((SIZE_T)~(SIZE_T)0)   // max of SIZE_T without pulling stdint.h
+#endif
+
 #ifdef DEBUG
 // Poison value to detect double-frees on leaves
 #define LEAF_FREED_MAGIC ((USHORT)0xDEAD)
 #endif
+
+#ifndef ART_ENABLE_POISON_ON_FREE
+#  ifdef DEBUG
+#    define ART_ENABLE_POISON_ON_FREE 1
+#  else
+#    define ART_ENABLE_POISON_ON_FREE 0
+#  endif
+#endif
+
 
 typedef enum { 
 	NODE4 = 1, 
@@ -142,12 +149,12 @@ ART_LEAF* art_maximum(ART_TREE* t);
 #if defined(UNIT_TEST)
 
 extern PVOID Test_ExAllocatePool2(ULONG PoolFlags, SIZE_T NumberOfBytes, ULONG Tag);
-extern VOID Test_ExFreePoolWithTag(PVOID P, ULONG Tag);
+extern VOID Test_ExFreePool2(PVOID P, ULONG Tag, PCPOOL_EXTENDED_PARAMETER ExtendedParameters, ULONG ExtendedParametersCount);
 NTSTATUS Test_RtlDowncaseUnicodeString(PUNICODE_STRING DestinationString, PCUNICODE_STRING SourceString, BOOLEAN AllocateDestinationString);
 NTSTATUS Test_RtlUnicodeToUTF8N(PCHAR UTF8StringDestination, ULONG UTF8StringMaxByteCount, PULONG UTF8StringActualByteCount, PCWCH UnicodeStringSource, ULONG UnicodeStringByteCount);
 
 #define ExAllocatePool2 Test_ExAllocatePool2
-#define ExFreePoolWithTag Test_ExFreePoolWithTag
+#define ExFreePool2 Test_ExFreePool2
 #define RtlDowncaseUnicodeString Test_RtlDowncaseUnicodeString
 #define RtlUnicodeToUTF8N Test_RtlUnicodeToUTF8N
 
@@ -175,7 +182,7 @@ STATIC NTSTATUS recursive_insert(_Inout_opt_ ART_NODE* node, _Inout_ ART_NODE** 
 STATIC NTSTATUS remove_child256(_In_ ART_NODE256* node, _Inout_ ART_NODE** ref, _In_ UCHAR c);
 STATIC NTSTATUS remove_child48(_In_ ART_NODE48* node, _Inout_ ART_NODE** ref, _In_ UCHAR c);
 STATIC NTSTATUS remove_child16(_In_ ART_NODE16* node, _Inout_ ART_NODE** ref, _In_ ART_NODE** leaf);
-STATIC NTSTATUS remove_child4(_In_ ART_NODE4* node, _Inout_ ART_NODE** ref, _In_ ART_NODE** leaf);
+STATIC NTSTATUS remove_child4(_Inout_ ART_NODE4* node, _Inout_ ART_NODE** ref, _Inout_ ART_NODE** remove_slot);
 STATIC NTSTATUS remove_child(_In_ ART_NODE* node, _Inout_ ART_NODE** ref, _In_ UCHAR c, _In_opt_ ART_NODE** leaf);
 STATIC ART_LEAF* recursive_delete_internal(_In_ ART_NODE* node, _Inout_ ART_NODE** ref, _In_reads_bytes_(key_length) CONST PUCHAR key, _In_ USHORT key_length, _In_ USHORT depth, _In_ USHORT recursion_depth);
 STATIC ART_LEAF* recursive_delete(_In_opt_ ART_NODE* node, _Inout_ ART_NODE** ref, _In_reads_bytes_(key_length) CONST PUCHAR key, _In_ USHORT key_length, _In_ USHORT depth);

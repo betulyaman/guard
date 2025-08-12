@@ -14,10 +14,10 @@ BOOLEAN test_null_pointer_handling()
     reset_mock_state();
 
     // Test 1.1: Explicit NULL pointer
-    // Verifies the function safely handles NULL without calling ExFreePoolWithTag
+    // Verifies the function safely handles NULL without calling ExFreePool2
     destroy_utf8_key(NULL);
 
-    TEST_ASSERT(g_free_call_count == 0, "Should not call ExFreePoolWithTag for NULL pointer");
+    TEST_ASSERT(g_free_call_count == 0, "Should not call ExFreePool2 for NULL pointer");
 
     // Test 1.2: Multiple NULL calls (should be safe)
     destroy_utf8_key(NULL);
@@ -25,7 +25,7 @@ BOOLEAN test_null_pointer_handling()
 
     TEST_ASSERT(g_free_call_count == 0, "Multiple NULL calls should not trigger any frees");
 
-    DbgPrint("[INFO] NULL pointer handling works correctly - no crashes or unexpected calls\n");
+    LOG_MSG("[INFO] NULL pointer handling works correctly - no crashes or unexpected calls\n");
 
     TEST_END("NULL Pointer Handling");
     return TRUE;
@@ -42,7 +42,7 @@ BOOLEAN test_valid_pointer_deallocation()
     PUCHAR test_key = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, 16, ART_TAG);
 
     if (!test_key) {
-        DbgPrint("[TEST SKIP] Could not allocate memory for valid pointer test\n");
+        LOG_MSG("[TEST SKIP] Could not allocate memory for valid pointer test\n");
         TEST_END("Valid Pointer Deallocation");
         return TRUE; // Skip this test if allocation fails
     }
@@ -56,11 +56,11 @@ BOOLEAN test_valid_pointer_deallocation()
     // Call destroy function
     destroy_utf8_key(test_key);
 
-    TEST_ASSERT(g_free_call_count == 1, "Should call ExFreePoolWithTag exactly once");
+    TEST_ASSERT(g_free_call_count == 1, "Should call ExFreePoolWith2 exactly once");
     TEST_ASSERT(g_last_freed_pointer == original_pointer, "Should free the correct pointer");
     TEST_ASSERT(g_last_freed_tag == ART_TAG, "Should use the correct pool tag");
 
-    DbgPrint("[INFO] Valid pointer deallocation completed successfully\n");
+    LOG_MSG("[INFO] Valid pointer deallocation completed successfully\n");
 
     // Test 2.2: Deallocate a larger buffer
     reset_mock_state();
@@ -77,7 +77,7 @@ BOOLEAN test_valid_pointer_deallocation()
 
         TEST_ASSERT(g_free_call_count == 1, "Should free large buffer correctly");
 
-        DbgPrint("[INFO] Large buffer deallocation completed successfully\n");
+        LOG_MSG("[INFO] Large buffer deallocation completed successfully\n");
     }
 
     TEST_END("Valid Pointer Deallocation");
@@ -106,7 +106,7 @@ BOOLEAN test_multiple_deallocation_safety()
     }
 
     if (allocated_count == 0) {
-        DbgPrint("[TEST SKIP] Could not allocate any memory for multiple deallocation test\n");
+        LOG_MSG("[TEST SKIP] Could not allocate any memory for multiple deallocation test\n");
         TEST_END("Multiple Deallocation Safety");
         return TRUE;
     }
@@ -119,9 +119,9 @@ BOOLEAN test_multiple_deallocation_safety()
     }
 
     TEST_ASSERT(g_free_call_count == (ULONG)allocated_count,
-        "Should call ExFreePoolWithTag for each valid pointer");
+        "Should call ExFreePool2 for each valid pointer");
 
-    DbgPrint("[INFO] Multiple deallocation completed - freed %d buffers\n", allocated_count);
+    LOG_MSG("[INFO] Multiple deallocation completed - freed %d buffers\n", allocated_count);
 
     TEST_END("Multiple Deallocation Safety");
     return TRUE;
@@ -142,7 +142,7 @@ BOOLEAN test_edge_case_pointers()
 
         TEST_ASSERT(g_free_call_count == 1, "Should handle tiny allocation correctly");
 
-        DbgPrint("[INFO] Tiny allocation (1 byte) handled correctly\n");
+        LOG_MSG("[INFO] Tiny allocation (1 byte) handled correctly\n");
     }
 
     // Test 4.2: Zero-length string (but valid pointer)
@@ -154,7 +154,7 @@ BOOLEAN test_edge_case_pointers()
 
         TEST_ASSERT(g_free_call_count == 1, "Should handle empty string pointer correctly");
 
-        DbgPrint("[INFO] Empty string pointer handled correctly\n");
+        LOG_MSG("[INFO] Empty string pointer handled correctly\n");
     }
 
     TEST_END("Edge Case Pointers");
@@ -177,7 +177,7 @@ BOOLEAN test_integration_with_unicode_to_utf8()
     PUCHAR simulated_utf8_key = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, 64, ART_TAG);
 
     if (!simulated_utf8_key) {
-        DbgPrint("[TEST SKIP] Could not allocate memory for integration test\n");
+        LOG_MSG("[TEST SKIP] Could not allocate memory for integration test\n");
         TEST_END("Integration with unicode_to_utf8");
         return TRUE;
     }
@@ -196,7 +196,7 @@ BOOLEAN test_integration_with_unicode_to_utf8()
     TEST_ASSERT(g_free_call_count == 1, "Should properly clean up simulated UTF-8 key");
     TEST_ASSERT(g_last_freed_tag == ART_TAG, "Should use correct tag in cleanup");
 
-    DbgPrint("[INFO] Integration test completed - typical usage pattern works\n");
+    LOG_MSG("[INFO] Integration test completed - typical usage pattern works\n");
 
     TEST_END("Integration with unicode_to_utf8");
     return TRUE;
@@ -234,7 +234,7 @@ BOOLEAN test_concurrent_usage_simulation()
     TEST_ASSERT(g_free_call_count == (ULONG)successful_allocations,
         "Should clean up all successfully allocated contexts");
 
-    DbgPrint("[INFO] Concurrent usage simulation completed - %d contexts handled\n",
+    LOG_MSG("[INFO] Concurrent usage simulation completed - %d contexts handled\n",
         successful_allocations);
 
     TEST_END("Concurrent Usage Simulation");
@@ -255,7 +255,7 @@ BOOLEAN test_memory_pattern_validation()
     if (zero_key) {
         RtlZeroMemory(zero_key, 32);
         destroy_utf8_key(zero_key);
-        DbgPrint("[INFO] All-zeros memory pattern handled correctly\n");
+        LOG_MSG("[INFO] All-zeros memory pattern handled correctly\n");
     }
 
     // Test 7.2: All 0xFF pattern
@@ -264,7 +264,7 @@ BOOLEAN test_memory_pattern_validation()
     if (ff_key) {
         RtlFillMemory(ff_key, 32, 0xFF);
         destroy_utf8_key(ff_key);
-        DbgPrint("[INFO] All-0xFF memory pattern handled correctly\n");
+        LOG_MSG("[INFO] All-0xFF memory pattern handled correctly\n");
     }
 
     // Test 7.3: Alternating pattern
@@ -275,7 +275,7 @@ BOOLEAN test_memory_pattern_validation()
             alt_key[i] = (i % 2) ? 0xAA : 0x55;
         }
         destroy_utf8_key(alt_key);
-        DbgPrint("[INFO] Alternating memory pattern handled correctly\n");
+        LOG_MSG("[INFO] Alternating memory pattern handled correctly\n");
     }
 
     TEST_END("Memory Pattern Validation");
@@ -306,14 +306,14 @@ BOOLEAN test_stress_allocation_deallocation()
         else {
             // If allocation fails, that's not necessarily a test failure
             // but we should note it
-            DbgPrint("[INFO] Allocation failed at iteration %d (expected under stress)\n", i);
+            LOG_MSG("[INFO] Allocation failed at iteration %d (expected under stress)\n", i);
         }
     }
 
     TEST_ASSERT(g_free_call_count == (ULONG)successful_cycles,
         "Should free all successfully allocated stress test keys");
 
-    DbgPrint("[INFO] Stress test completed: %d/%d successful cycles\n",
+    LOG_MSG("[INFO] Stress test completed: %d/%d successful cycles\n",
         successful_cycles, STRESS_ITERATIONS);
 
     TEST_END("Stress Allocation/Deallocation");
@@ -342,14 +342,14 @@ BOOLEAN test_function_behavior_validation()
         TEST_ASSERT(test_key == original_value,
             "Function should not modify the pointer parameter value");
 
-        DbgPrint("[INFO] Function parameter behavior validated\n");
+        LOG_MSG("[INFO] Function parameter behavior validated\n");
     }
 
     // Test 9.2: Verify function is safe to call in different contexts
     // (This is more of a documentation test)
-    destroy_utf8_key(NULL); // Should be safe at any IRQL where ExFreePoolWithTag is safe
+    destroy_utf8_key(NULL); // Should be safe at any IRQL where ExFreePool2 is safe
 
-    DbgPrint("[INFO] Function context safety validated\n");
+    LOG_MSG("[INFO] Function context safety validated\n");
 
     TEST_END("Function Behavior Validation");
     return TRUE;
@@ -369,27 +369,27 @@ BOOLEAN test_logging_and_debugging()
     if (log_test_key) {
         RtlStringCbCopyA((char*)log_test_key, 16, "log_test");
 
-        DbgPrint("[TEST] About to call destroy_utf8_key - expect LOG_MSG output\n");
+        LOG_MSG("[TEST] About to call destroy_utf8_key - expect LOG_MSG output\n");
         destroy_utf8_key(log_test_key);
-        DbgPrint("[TEST] destroy_utf8_key call completed\n");
+        LOG_MSG("[TEST] destroy_utf8_key call completed\n");
     }
 
     // Test 10.2: Verify no logging for NULL pointer
-    DbgPrint("[TEST] About to call destroy_utf8_key with NULL - expect no LOG_MSG\n");
+    LOG_MSG("[TEST] About to call destroy_utf8_key with NULL - expect no LOG_MSG\n");
     destroy_utf8_key(NULL);
-    DbgPrint("[TEST] destroy_utf8_key with NULL completed\n");
+    LOG_MSG("[TEST] destroy_utf8_key with NULL completed\n");
 
     // Test 10.3: Multiple valid pointers to test logging consistency
     for (int i = 0; i < 3; i++) {
         PUCHAR multi_log_key = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, 20, ART_TAG);
         if (multi_log_key) {
             RtlStringCbPrintfA((char*)multi_log_key, 20, "multi_%d", i);
-            DbgPrint("[TEST] Destroying key %d\n", i);
+            LOG_MSG("[TEST] Destroying key %d\n", i);
             destroy_utf8_key(multi_log_key);
         }
     }
 
-    DbgPrint("[INFO] Logging and debugging verification completed\n");
+    LOG_MSG("[INFO] Logging and debugging verification completed\n");
 
     TEST_END("Logging and Debugging Verification");
     return TRUE;
@@ -398,15 +398,15 @@ BOOLEAN test_logging_and_debugging()
 // Main test runner function for destroy_utf8_key
 NTSTATUS run_all_destroy_utf8_key_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting Comprehensive destroy_utf8_key Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting Comprehensive destroy_utf8_key Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     // Note: Actual memory allocation failure testing would require 
     // fault injection mechanisms not available in standard kernel code
-    DbgPrint("[NOTE] Some advanced testing scenarios (like true memory pressure\n");
-    DbgPrint("       and fault injection) require specialized test frameworks\n");
-    DbgPrint("       not available in standard kernel development environments.\n\n");
+    LOG_MSG("[NOTE] Some advanced testing scenarios (like true memory pressure\n");
+    LOG_MSG("       and fault injection) require specialized test frameworks\n");
+    LOG_MSG("       not available in standard kernel development environments.\n\n");
 
     BOOLEAN all_passed = TRUE;
 
@@ -422,14 +422,14 @@ NTSTATUS run_all_destroy_utf8_key_tests()
     if (!test_function_behavior_validation()) all_passed = FALSE;
     if (!test_logging_and_debugging()) all_passed = FALSE;
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all_passed) {
-        DbgPrint("ALL destroy_utf8_key TESTS PASSED!\n");
+        LOG_MSG("ALL destroy_utf8_key TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME destroy_utf8_key TESTS FAILED!\n");
+        LOG_MSG("SOME destroy_utf8_key TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
@@ -437,9 +437,9 @@ NTSTATUS run_all_destroy_utf8_key_tests()
 // Combined test runner for both functions
 NTSTATUS run_all_utf8_key_tests()
 {
-    DbgPrint("\n##########################################\n");
-    DbgPrint("Starting Complete UTF-8 Key Management Test Suite\n");
-    DbgPrint("##########################################\n\n");
+    LOG_MSG("\n##########################################\n");
+    LOG_MSG("Starting Complete UTF-8 Key Management Test Suite\n");
+    LOG_MSG("##########################################\n\n");
 
     NTSTATUS destroy_tests_status = STATUS_SUCCESS;
 
@@ -449,20 +449,20 @@ NTSTATUS run_all_utf8_key_tests()
     // Run destroy_utf8_key tests
     destroy_tests_status = run_all_destroy_utf8_key_tests();
 
-    DbgPrint("\n##########################################\n");
-    DbgPrint("Complete UTF-8 Key Management Test Suite Results:\n");
-    // DbgPrint("unicode_to_utf8 tests: %s\n", 
+    LOG_MSG("\n##########################################\n");
+    LOG_MSG("Complete UTF-8 Key Management Test Suite Results:\n");
+    // LOG_MSG("unicode_to_utf8 tests: %s\n", 
     //          NT_SUCCESS(unicode_tests_status) ? "PASSED" : "FAILED");
-    DbgPrint("destroy_utf8_key tests: %s\n",
+    LOG_MSG("destroy_utf8_key tests: %s\n",
         NT_SUCCESS(destroy_tests_status) ? "PASSED" : "FAILED");
 
     if (NT_SUCCESS(destroy_tests_status)) {
-        DbgPrint("\nOVERALL RESULT: SUCCESS\n");
+        LOG_MSG("\nOVERALL RESULT: SUCCESS\n");
     }
     else {
-        DbgPrint("\nOVERALL RESULT: FAILURE \n");
+        LOG_MSG("\nOVERALL RESULT: FAILURE \n");
     }
-    DbgPrint("##########################################\n\n");
+    LOG_MSG("##########################################\n\n");
 
     return NT_SUCCESS(destroy_tests_status) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

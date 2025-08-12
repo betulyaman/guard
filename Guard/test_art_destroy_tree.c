@@ -315,9 +315,9 @@ BOOLEAN test_destroy_utf8_key_frees_with_tag()
 // =======================================
 NTSTATUS run_all_art_destroy_tree_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting art_destroy_tree() Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting art_destroy_tree() Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all = TRUE;
 
@@ -331,14 +331,14 @@ NTSTATUS run_all_art_destroy_tree_tests()
     if (!test_destroy_utf8_key_null_safe())              all = FALSE; // (X1)
     if (!test_destroy_utf8_key_frees_with_tag())         all = FALSE; // (X2)
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all) {
-        DbgPrint("ALL art_destroy_tree() TESTS PASSED!\n");
+        LOG_MSG("ALL art_destroy_tree() TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME art_destroy_tree() TESTS FAILED!\n");
+        LOG_MSG("SOME art_destroy_tree() TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

@@ -64,7 +64,7 @@ VOID pending_operation_list_clear() {
 		pending_operation->data->IoStatus.Information = 0;
 		FltCompletePendedPreOperation(pending_operation->data, FLT_PREOP_COMPLETE, NULL);
 
-		ExFreePoolWithTag(head, PENDING_OPERATION_TAG);
+		ExFreePool2(head, PENDING_OPERATION_TAG, NULL, 0);
 		head = RemoveHeadList(&g_pending_operation_list);
 	}
 
@@ -96,7 +96,7 @@ VOID pending_operation_list_timeout_clear() {
 			op->data->IoStatus.Information = 0;
 			FltCompletePendedPreOperation(op->data, FLT_PREOP_COMPLETE, NULL);
 
-			ExFreePoolWithTag(op, PENDING_OPERATION_TAG);
+			ExFreePool2(op, PENDING_OPERATION_TAG, NULL, 0);
 		}
 		else {
 			entry = entry->Flink;

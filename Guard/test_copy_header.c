@@ -9,7 +9,7 @@ STATIC NTSTATUS copy_header(_Inout_ ART_NODE* dest, _In_ ART_NODE* src);
 
 static VOID test_free_node_base(ART_NODE* n)
 {
-    if (n) ExFreePoolWithTag(n, ART_TAG);
+    if (n) ExFreePool2(n, ART_TAG, NULL, 0);
 }
 
 static VOID test_fill_prefix(UCHAR* dst, USHORT len, UCHAR start)
@@ -82,7 +82,7 @@ BOOLEAN test_copy_header_null_params()
         test_free_node_base(dest);
     }
 
-    DbgPrint("[INFO] Test 1 done: NULL parameter paths verified\n");
+    LOG_MSG("[INFO] Test 1 done: NULL parameter paths verified\n");
     TEST_END("copy_header: NULL parameter handling");
     return TRUE;
 }
@@ -132,7 +132,7 @@ BOOLEAN test_copy_header_zero_length_prefix()
     test_free_node_base(src);
     test_free_node_base(dest);
 
-    DbgPrint("[INFO] Test 2 done: zero-length prefix leaves prefix bytes intact\n");
+    LOG_MSG("[INFO] Test 2 done: zero-length prefix leaves prefix bytes intact\n");
     TEST_END("copy_header: zero-length prefix");
     return TRUE;
 }
@@ -190,7 +190,7 @@ BOOLEAN test_copy_header_inbounds_copy()
     test_free_node_base(src);
     test_free_node_base(dest);
 
-    DbgPrint("[INFO] Test 3 done: in-bounds copy correct and non-destructive beyond len\n");
+    LOG_MSG("[INFO] Test 3 done: in-bounds copy correct and non-destructive beyond len\n");
     TEST_END("copy_header: in-bounds copy");
     return TRUE;
 }
@@ -242,7 +242,7 @@ BOOLEAN test_copy_header_truncation()
     test_free_node_base(src);
     test_free_node_base(dest);
 
-    DbgPrint("[INFO] Test 4 done: truncation sets length and copies exactly MAX_PREFIX_LENGTH bytes\n");
+    LOG_MSG("[INFO] Test 4 done: truncation sets length and copies exactly MAX_PREFIX_LENGTH bytes\n");
     TEST_END("copy_header: truncation path");
     return TRUE;
 }
@@ -299,7 +299,7 @@ BOOLEAN test_copy_header_self_copy()
         test_free_node_base(n);
     }
 
-    DbgPrint("[INFO] Test 5 done: self-copy scenarios behave correctly\n");
+    LOG_MSG("[INFO] Test 5 done: self-copy scenarios behave correctly\n");
     TEST_END("copy_header: self-copy (dest == src)");
     return TRUE;
 }
@@ -343,7 +343,7 @@ BOOLEAN test_copy_header_no_allocfree_sideeffects()
     test_free_node_base(b);
     test_free_node_base(c);
 
-    DbgPrint("[INFO] Test 6 done: no alloc/free side-effects confirmed\n");
+    LOG_MSG("[INFO] Test 6 done: no alloc/free side-effects confirmed\n");
     TEST_END("copy_header: no alloc/free side-effects");
     return TRUE;
 }
@@ -353,9 +353,9 @@ BOOLEAN test_copy_header_no_allocfree_sideeffects()
    ========================================================= */
 NTSTATUS run_all_copy_header_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting copy_header Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting copy_header Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all_passed = TRUE;
 
@@ -366,14 +366,14 @@ NTSTATUS run_all_copy_header_tests()
     if (!test_copy_header_self_copy())                all_passed = FALSE;
     if (!test_copy_header_no_allocfree_sideeffects()) all_passed = FALSE;
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all_passed) {
-        DbgPrint("ALL copy_header TESTS PASSED!\n");
+        LOG_MSG("ALL copy_header TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME copy_header TESTS FAILED!\n");
+        LOG_MSG("SOME copy_header TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

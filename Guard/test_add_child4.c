@@ -463,9 +463,9 @@ BOOLEAN test_add_child4_expand_alloc_failure()
    ========================================================= */
 NTSTATUS run_all_add_child4_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting add_child4() Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting add_child4() Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all_passed = TRUE;
 
@@ -481,14 +481,14 @@ NTSTATUS run_all_add_child4_tests()
     if (!test_add_child4_expand_to_16_count_check())   all_passed = FALSE; // 9b
     if (!test_add_child4_expand_alloc_failure())       all_passed = FALSE; // 10
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all_passed) {
-        DbgPrint("ALL add_child4() TESTS PASSED!\n");
+        LOG_MSG("ALL add_child4() TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME add_child4() TESTS FAILED!\n");
+        LOG_MSG("SOME add_child4() TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

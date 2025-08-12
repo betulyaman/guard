@@ -6,7 +6,7 @@ STATIC USHORT check_prefix(_In_ CONST ART_NODE* node, _In_reads_bytes_(key_lengt
 
 static VOID test_free_node_base(ART_NODE* n)
 {
-    if (n) ExFreePoolWithTag(n, ART_TAG);
+    if (n) ExFreePool2(n, ART_TAG, NULL, 0);
 }
 
 static VOID test_fill_prefix(UCHAR* dst, USHORT len, UCHAR start)
@@ -73,16 +73,24 @@ BOOLEAN test_check_prefix_param_validation()
     {
         ART_NODE* n = test_alloc_node_base(); TEST_ASSERT(n, "1.4-pre: node alloc");
         n->prefix_length = 1; n->prefix[0] = 0x33;
+#pragma warning(push)
+#pragma warning(disable: 4189)
         UCHAR dummy = 0x33;
         ULONG a0 = g_alloc_call_count, f0 = g_free_call_count;
-        USHORT too_long = (USHORT)((MAX_KEY_LENGTH < USHRT_MAX) ? (MAX_KEY_LENGTH + 1) : USHRT_MAX);
+#pragma warning(pop)
+#if (MAX_KEY_LENGTH < MAXUSHORT)
+        const USHORT too_long = (USHORT)(MAX_KEY_LENGTH + 1);
         USHORT r = check_prefix(n, &dummy, too_long, 0);
         TEST_ASSERT(r == 0, "1.4: key_length > MAX_KEY_LENGTH must return 0");
         TEST_ASSERT(g_alloc_call_count == a0 && g_free_call_count == f0, "1.4: No alloc/free");
+#else
+        LOG_MSG("[INFO] 1.4 skipped: USHORT cannot represent MAX_KEY_LENGTH+1 (MAX_KEY_LENGTH==MAXUSHORT)\n");
+#endif
+
         test_free_node_base(n);
     }
 
-    DbgPrint("[INFO] Test 1: parameter/limit guards verified\n");
+    LOG_MSG("[INFO] Test 1: parameter/limit guards verified\n");
     TEST_END("check_prefix: parameter validation");
     return TRUE;
 }
@@ -119,7 +127,7 @@ BOOLEAN test_check_prefix_depth_and_zero_prefix()
         test_free_node_base(n);
     }
 
-    DbgPrint("[INFO] Test 2: depth and zero-prefix branches verified\n");
+    LOG_MSG("[INFO] Test 2: depth and zero-prefix branches verified\n");
     TEST_END("check_prefix: excessive depth & zero prefix");
     return TRUE;
 }
@@ -136,37 +144,54 @@ BOOLEAN test_check_prefix_full_match()
 {
     TEST_START("check_prefix: full-match cases");
 
-    // (3.1)
+    // (3.1) full match — expected = min(4, MAX_PREFIX_LENGTH, key_length - depth)
     reset_mock_state();
     {
         ART_NODE* n = test_alloc_node_base(); TEST_ASSERT(n, "3.1-pre: node alloc");
-        n->prefix_length = 4; test_fill_prefix(n->prefix, 4, 0x30); // 30 31 32 33
+        n->prefix_length = 4;
+        test_fill_prefix(n->prefix, 4, 0x30); // 30 31 32 33
+
         UCHAR k[10] = { 0 };
         for (int i = 0; i < 10; i++) k[i] = (UCHAR)(0x20 + i);
         // Overwrite first 4 with the node’s prefix to ensure match
         k[0] = 0x30; k[1] = 0x31; k[2] = 0x32; k[3] = 0x33;
 
-        USHORT r = check_prefix(n, k, 10, 0);
-        TEST_ASSERT(r == 4, "3.1: should return full prefix length 4");
+        const USHORT depth = 0;
+        const USHORT remaining = (USHORT)(10 - depth);
+        const USHORT expected = (USHORT)((4 < (USHORT)MAX_PREFIX_LENGTH ? 4 : (USHORT)MAX_PREFIX_LENGTH) < remaining
+            ? (4 < (USHORT)MAX_PREFIX_LENGTH ? 4 : (USHORT)MAX_PREFIX_LENGTH)
+            : remaining);
+
+        USHORT r = check_prefix(n, k, 10, depth);
+        TEST_ASSERT(r == expected, "3.1: should return full prefix length (min(prefix, MAX_PREFIX_LENGTH, remaining))");
+
         test_free_node_base(n);
     }
 
-    // (3.2) depth shift
+    // (3.2) depth shift — expected = min(prefix_length, MAX_PREFIX_LENGTH, remaining)
     reset_mock_state();
     {
         ART_NODE* n = test_alloc_node_base(); TEST_ASSERT(n, "3.2-pre: node alloc");
-        n->prefix_length = 5; test_fill_prefix(n->prefix, 5, 0x40); // 40..44
+        n->prefix_length = 5;
+        test_fill_prefix(n->prefix, 5, 0x40); // 40..44
+
         UCHAR k[12] = { 0 };
-        // Put the same sequence starting at offset depth=3
-        USHORT depth = 3;
+        USHORT depth = 3;                     // remaining = 12 - 3 = 9
         for (int i = 0; i < 5; i++) k[depth + i] = (UCHAR)(0x40 + i);
 
+        const USHORT remaining = (USHORT)(12 - depth);
+        const USHORT pfx_cap = (USHORT)((n->prefix_length < (USHORT)MAX_PREFIX_LENGTH)
+            ? n->prefix_length : (USHORT)MAX_PREFIX_LENGTH);
+        const USHORT expected = (pfx_cap < remaining) ? pfx_cap : remaining;
+
         USHORT r = check_prefix(n, k, 12, depth);
-        TEST_ASSERT(r == 5, "3.2: should return prefix length 5");
+        TEST_ASSERT(r == expected, "3.2: should return min(prefix, MAX_PREFIX_LENGTH, remaining)");
+
         test_free_node_base(n);
     }
 
-    DbgPrint("[INFO] Test 3: full-match returns expected lengths\n");
+
+    LOG_MSG("[INFO] Test 3: full-match returns expected lengths\n");
     TEST_END("check_prefix: full-match cases");
     return TRUE;
 }
@@ -196,21 +221,28 @@ BOOLEAN test_check_prefix_truncation_paths()
         test_free_node_base(n);
     }
 
-    // (4.2) remaining shorter than prefix
+    // (4.2) remaining shorter than prefix — expected = min(prefix_length, MAX_PREFIX_LENGTH, remaining)
     reset_mock_state();
     {
         ART_NODE* n = test_alloc_node_base(); TEST_ASSERT(n, "4.2-pre: node alloc");
-        n->prefix_length = 12; test_fill_prefix(n->prefix, 12, 0x60);
+        n->prefix_length = 12;
+        test_fill_prefix(n->prefix, 12, 0x60); // 60..6B
+
         UCHAR k[20] = { 0 };
-        USHORT depth = 15; // remaining = 20 - 15 = 5
-        for (int i = 0; i < 5; i++) k[depth + i] = (UCHAR)(0x60 + i);
+        const USHORT depth = 15; // remaining = 20 - 15 = 5
+        const USHORT remaining = (USHORT)(20 - depth);
+        for (USHORT i = 0; i < remaining; i++) k[depth + i] = (UCHAR)(0x60 + i);
+
+        const USHORT pfx_cap = (USHORT)((n->prefix_length < (USHORT)MAX_PREFIX_LENGTH) ? n->prefix_length : (USHORT)MAX_PREFIX_LENGTH);
+        const USHORT expected = (pfx_cap < remaining) ? pfx_cap : remaining;
 
         USHORT r = check_prefix(n, k, 20, depth);
-        TEST_ASSERT(r == 5, "4.2: must return remaining_key_length when smaller than prefix");
+        TEST_ASSERT(r == expected, "4.2: must return min(prefix, MAX_PREFIX_LENGTH, remaining)");
+
         test_free_node_base(n);
     }
 
-    DbgPrint("[INFO] Test 4: truncation cases validated\n");
+    LOG_MSG("[INFO] Test 4: truncation cases validated\n");
     TEST_END("check_prefix: truncation paths");
     return TRUE;
 }
@@ -260,25 +292,36 @@ BOOLEAN test_check_prefix_mismatch_positions()
         test_free_node_base(n);
     }
 
-    // (5.3) mismatch at last compared index
+    // (5.3) mismatch at last compared index — craft mismatch at index (cmp_len - 1)
     reset_mock_state();
     {
         ART_NODE* n = test_alloc_node_base(); TEST_ASSERT(n, "5.3-pre: node alloc");
-        // choose max_len=5 by limiting remaining length
-        n->prefix_length = 10; test_fill_prefix(n->prefix, 10, baseStart);
-        UCHAR k[10] = { 0 };
-        USHORT depth = 3; // remaining = 10 - 3 = 7; we will compare 5 bytes by crafting:
-        USHORT max_cmp = 5;
-        for (USHORT i = 0; i < max_cmp; i++) k[depth + i] = (UCHAR)(baseStart + i);
-        // put mismatch at the last compared byte (index 4)
-        k[depth + (max_cmp - 1)] = (UCHAR)(baseStart + 0x44);
+        n->prefix_length = 10;
+        baseStart = 0x70;
+        test_fill_prefix(n->prefix, 10, baseStart); // 70..79
 
-        USHORT r = check_prefix(n, k, 10, depth);
-        TEST_ASSERT(r == (max_cmp - 1), "5.3: mismatch at last compared index");
+        UCHAR k[10] = { 0 };
+        const USHORT depth = 3;                   // remaining = 7
+        const USHORT key_len = 10;
+        const USHORT remaining = (USHORT)(key_len - depth);
+
+        const USHORT pfx_cap = (USHORT)((n->prefix_length < (USHORT)MAX_PREFIX_LENGTH) ? n->prefix_length : (USHORT)MAX_PREFIX_LENGTH);
+        const USHORT cmp_len = (pfx_cap < remaining) ? pfx_cap : remaining;
+
+        // First make the whole compare window match...
+        for (USHORT i = 0; i < cmp_len; i++) k[depth + i] = (UCHAR)(baseStart + i);
+        // ...then force mismatch at the last compared byte (index cmp_len-1)
+        if (cmp_len > 0) {
+            k[depth + (cmp_len - 1)] = (UCHAR)(baseStart + 0x44);
+        }
+
+        USHORT r = check_prefix(n, k, key_len, depth);
+        TEST_ASSERT(r == (cmp_len > 0 ? (cmp_len - 1) : 0), "5.3: mismatch at last compared index");
+
         test_free_node_base(n);
     }
 
-    DbgPrint("[INFO] Test 5: mismatch position handling validated\n");
+    LOG_MSG("[INFO] Test 5: mismatch position handling validated\n");
     TEST_END("check_prefix: mismatch detection");
     return TRUE;
 }
@@ -316,7 +359,7 @@ BOOLEAN test_check_prefix_depth_edges()
         test_free_node_base(n);
     }
 
-    DbgPrint("[INFO] Test 6: depth edges validated\n");
+    LOG_MSG("[INFO] Test 6: depth edges validated\n");
     TEST_END("check_prefix: depth edge cases");
     return TRUE;
 }
@@ -350,7 +393,7 @@ BOOLEAN test_check_prefix_no_allocfree_sideeffects()
 
     test_free_node_base(n);
 
-    DbgPrint("[INFO] Test 7: side-effects counters unchanged as expected\n");
+    LOG_MSG("[INFO] Test 7: side-effects counters unchanged as expected\n");
     TEST_END("check_prefix: no alloc/free side-effects");
     return TRUE;
 }
@@ -360,9 +403,9 @@ BOOLEAN test_check_prefix_no_allocfree_sideeffects()
    ========================================================= */
 NTSTATUS run_all_check_prefix_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting check_prefix Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting check_prefix Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all_passed = TRUE;
 
@@ -374,14 +417,14 @@ NTSTATUS run_all_check_prefix_tests()
     if (!test_check_prefix_depth_edges())             all_passed = FALSE;
     if (!test_check_prefix_no_allocfree_sideeffects())all_passed = FALSE;
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all_passed) {
-        DbgPrint("ALL check_prefix TESTS PASSED!\n");
+        LOG_MSG("ALL check_prefix TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME check_prefix TESTS FAILED!\n");
+        LOG_MSG("SOME check_prefix TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

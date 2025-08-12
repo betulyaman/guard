@@ -359,8 +359,8 @@ BOOLEAN test_remove_child16_resize_to_node4()
 BOOLEAN test_remove_child16_fi_only_branches_documented()
 {
     TEST_START("remove_child16: FI-only branches (documented)");
-    DbgPrint("[INFO] art_create_node(NODE4) failure requires fault injection to simulate.\n");
-    DbgPrint("[INFO] copy_header failure requires fault injection to simulate.\n");
+    LOG_MSG("[INFO] art_create_node(NODE4) failure requires fault injection to simulate.\n");
+    LOG_MSG("[INFO] copy_header failure requires fault injection to simulate.\n");
     TEST_END("remove_child16: FI-only branches (documented)");
     return TRUE;
 }
@@ -370,9 +370,9 @@ BOOLEAN test_remove_child16_fi_only_branches_documented()
 // ===============================================================
 NTSTATUS run_all_remove_child16_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting remove_child16() Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting remove_child16() Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all = TRUE;
 
@@ -385,14 +385,14 @@ NTSTATUS run_all_remove_child16_tests()
     if (!test_remove_child16_resize_to_node4())                 all = FALSE; // 7
     if (!test_remove_child16_fi_only_branches_documented())     all = FALSE; // 8 (doc)
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all) {
-        DbgPrint("ALL remove_child16() TESTS PASSED!\n");
+        LOG_MSG("ALL remove_child16() TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME remove_child16() TESTS FAILED!\n");
+        LOG_MSG("SOME remove_child16() TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

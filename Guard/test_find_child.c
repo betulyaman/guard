@@ -3,6 +3,11 @@
 // Function under test
 STATIC ART_NODE** find_child(_In_ ART_NODE* node, _In_ UCHAR c);
 
+// helper for controlling alloc/free
+#define SNAP(stage) \
+    LOG_MSG("[SNAP] %s: alloc=%lu free=%lu (a0=%lu f0=%lu)\n", \
+             stage, (g_alloc_call_count - a0), (g_free_call_count - f0), a0, f0)
+
 // ---------- Small helpers ----------
 // --- tiny local helpers (no CRT) ---
 static ART_NODE4* mk_n4(void) {
@@ -63,10 +68,10 @@ BOOLEAN test_find_child_null_and_invalid()
         TEST_ASSERT(pp == NULL, "1.2: invalid type must return NULL");
         TEST_ASSERT(g_alloc_call_count == a0 && g_free_call_count == f0,
             "1.2: find_child must not free the node");
-        ExFreePoolWithTag(base, ART_TAG);
+        ExFreePool2(base, ART_TAG, NULL, 0);
     }
 
-    DbgPrint("[INFO] Test 1: NULL and invalid type paths verified\n");
+    LOG_MSG("[INFO] Test 1: NULL and invalid type paths verified\n");
     TEST_END("find_child: NULL and invalid type");
     return TRUE;
 }
@@ -158,7 +163,7 @@ BOOLEAN test_find_child_node4()
         test_free_node_any(&n4->base);
     }
 
-    DbgPrint("[INFO] Test 2: NODE4 behaviors validated\n");
+    LOG_MSG("[INFO] Test 2: NODE4 behaviors validated\n");
     TEST_END("find_child: NODE4");
     return TRUE;
 }
@@ -235,7 +240,7 @@ BOOLEAN test_find_child_node16()
         test_free_node_any(&n16->base);
     }
 
-    DbgPrint("[INFO] Test 3: NODE16 bitfield+mask+ctz behavior validated\n");
+    LOG_MSG("[INFO] Test 3: NODE16 bitfield+mask+ctz behavior validated\n");
     TEST_END("find_child: NODE16");
     return TRUE;
 }
@@ -312,7 +317,7 @@ BOOLEAN test_find_child_node48()
         test_free_node_any(&n48->base);
     }
 
-    DbgPrint("[INFO] Test 4: NODE48 mapping rules validated\n");
+    LOG_MSG("[INFO] Test 4: NODE48 mapping rules validated\n");
     TEST_END("find_child: NODE48");
     return TRUE;
 }
@@ -359,7 +364,7 @@ BOOLEAN test_find_child_node256()
         test_free_node_any(&n256->base);
     }
 
-    DbgPrint("[INFO] Test 5: NODE256 direct table behavior validated\n");
+    LOG_MSG("[INFO] Test 5: NODE256 direct table behavior validated\n");
     TEST_END("find_child: NODE256");
     return TRUE;
 }
@@ -369,7 +374,7 @@ BOOLEAN test_find_child_node256()
    Purpose:
      - Ensure find_child never performs allocations or frees.
    Sub-checks:
-     (6.1) Alloc/free counters unchanged across mixed calls
+     - Per-call delta must be zero for alloc/free counters
    ========================================================= */
 BOOLEAN test_find_child_no_allocfree_sideeffects()
 {
@@ -379,47 +384,103 @@ BOOLEAN test_find_child_no_allocfree_sideeffects()
 
     ULONG a0 = g_alloc_call_count, f0 = g_free_call_count;
 
-    // A few diverse quick calls
+    // --- NULL ---
 #pragma warning(push)
-#pragma warning(disable: 6387) 
-    (void)find_child(NULL, 0x00);
+#pragma warning(disable: 6387)
+    {
+        ULONG ab = g_alloc_call_count, fb = g_free_call_count;
+        (void)find_child(NULL, 0x00);
+        SNAP("after NULL find_child");
+        TEST_ASSERT(g_alloc_call_count == ab && g_free_call_count == fb,
+            "NULL: find_child must not alloc/free");
+    }
 #pragma warning(pop)
 
+    // --- NODE4 ---
     {
-        ART_NODE4* n4 = t_alloc_node4(); n4->base.type = NODE4; n4->base.num_of_child = 0;
-        (void)find_child(&n4->base, (UCHAR)'x');
-        test_free_node_any(&n4->base);
-    }
-    {
-        ART_NODE16* n16 = t_alloc_node16(); n16->base.type = NODE16; n16->base.num_of_child = 1;
-        n16->keys[0] = 'k'; n16->children[0] = t_alloc_dummy_child(NODE4);
-        (void)find_child(&n16->base, (UCHAR)'k');
-        test_free_node_any(n16->children[0]); test_free_node_any(&n16->base);
-    }
-    {
-        ART_NODE48* n48 = t_alloc_node48(); n48->base.type = NODE48; n48->base.num_of_child = 1;
-        n48->child_index[0x2C] = 1; n48->children[0] = t_alloc_dummy_child(NODE16);
-        (void)find_child(&n48->base, 0x2C);
-        test_free_node_any(n48->children[0]); test_free_node_any(&n48->base);
-    }
-    {
-        ART_NODE256* n256 = t_alloc_node256(); n256->base.type = NODE256; n256->base.num_of_child = 1;
-        n256->children[0xEE] = t_alloc_dummy_child(NODE48);
-        (void)find_child(&n256->base, 0xEE);
-        test_free_node_any(n256->children[0xEE]); test_free_node_any(&n256->base);
+        ART_NODE4* n4 = t_alloc_node4();
+        if (n4) {
+            n4->base.type = NODE4;
+            n4->base.num_of_child = 0;
+
+            ULONG ab = g_alloc_call_count, fb = g_free_call_count;
+            (void)find_child(&n4->base, (UCHAR)'x');
+            SNAP("after NODE4 find_child");
+            TEST_ASSERT(g_alloc_call_count == ab && g_free_call_count == fb,
+                "NODE4: find_child must not alloc/free");
+
+            test_free_node_any(&n4->base);
+        }
     }
 
-    // Exact test-side allocations: NODE4(1) + NODE16(2) + NODE48(2) + NODE256(2) = 7
-    TEST_ASSERT(g_alloc_call_count == a0 + 7 /* our test allocations only */,
-            "6.1: No unexpected allocations inside find_child");
-    TEST_ASSERT(g_free_call_count >= f0 + 6,
-        "6.1: Frees correspond only to test cleanups");
+    // --- NODE16 ---
+    {
+        ART_NODE16* n16 = t_alloc_node16();
+        if (n16) {
+            n16->base.type = NODE16;
+            n16->base.num_of_child = 1;
+            n16->keys[0] = 'k';
+            n16->children[0] = t_alloc_dummy_child(NODE4);
 
-    DbgPrint("[INFO] Test 6: counters show find_child has no alloc/free\n");
+            ULONG ab = g_alloc_call_count, fb = g_free_call_count;
+            (void)find_child(&n16->base, (UCHAR)'k');
+            SNAP("after NODE16 find_child");
+            TEST_ASSERT(g_alloc_call_count == ab && g_free_call_count == fb,
+                "NODE16: find_child must not alloc/free");
+
+            if (n16->children[0]) test_free_node_any(n16->children[0]);
+            test_free_node_any(&n16->base);
+        }
+    }
+
+    // --- NODE48 ---
+    {
+        ART_NODE48* n48 = t_alloc_node48();
+        if (n48) {
+            n48->base.type = NODE48;
+            n48->base.num_of_child = 1;
+            RtlZeroMemory(n48->child_index, sizeof(n48->child_index));
+            n48->child_index[0x2C] = 1;
+            n48->children[0] = t_alloc_dummy_child(NODE16);
+
+            ULONG ab = g_alloc_call_count, fb = g_free_call_count;
+            (void)find_child(&n48->base, 0x2C);
+            SNAP("after NODE48 find_child");
+            TEST_ASSERT(g_alloc_call_count == ab && g_free_call_count == fb,
+                "NODE48: find_child must not alloc/free");
+
+            if (n48->children[0]) test_free_node_any(n48->children[0]);
+            test_free_node_any(&n48->base);
+        }
+    }
+
+    // --- NODE256 ---
+    {
+        ART_NODE256* n256 = t_alloc_node256();
+        if (n256) {
+            n256->base.type = NODE256;
+            n256->base.num_of_child = 1;
+            n256->children[0xEE] = t_alloc_dummy_child(NODE48);
+
+            ULONG ab = g_alloc_call_count, fb = g_free_call_count;
+            (void)find_child(&n256->base, 0xEE);
+            SNAP("after NODE256 find_child");
+            TEST_ASSERT(g_alloc_call_count == ab && g_free_call_count == fb,
+                "NODE256: find_child must not alloc/free");
+
+            if (n256->children[0xEE]) test_free_node_any(n256->children[0xEE]);
+            test_free_node_any(&n256->base);
+        }
+    }
+
+    // Ayrıca toplamda da find_child çağrıları boyunca delta 0 olmalı
+    TEST_ASSERT((g_alloc_call_count - a0) == 0 && (g_free_call_count - f0) == 0,
+        "Overall: find_child made no allocations/frees");
+
+    LOG_MSG("[INFO] Test 6: per-call deltas confirm find_child has no alloc/free\n");
     TEST_END("find_child: no alloc/free side effects");
     return TRUE;
 }
-
 // =========================================================
 // Fuzzer-style test using deterministic LCG (no CRT/random)
 // Covers NODE4/NODE16/NODE48/NODE256 with randomized content
@@ -487,9 +548,12 @@ BOOLEAN test_find_child_fuzzer_lcg()
         TEST_ASSERT(got == expect, "FZ-N4: expected pointer must match");
 
         // cleanup
-        for (int i = 0; i < 4; ++i)
-            if (n4->children[i]) ExFreePoolWithTag(n4->children[i], ART_TAG);
-        ExFreePoolWithTag(n4, ART_TAG);
+        for (int i = 0; i < 4; ++i) {
+            if (n4->children[i]) {
+                ExFreePool2(n4->children[i], ART_TAG, NULL, 0);
+            }
+        }
+        ExFreePool2(n4, ART_TAG, NULL, 0);
     }
 
     // ---------- Fuzz NODE16 ----------
@@ -521,9 +585,12 @@ BOOLEAN test_find_child_fuzzer_lcg()
         }
         TEST_ASSERT(got == expect, "FZ-N16: expected pointer must match");
 
-        for (int i = 0; i < 16; ++i)
-            if (n16->children[i]) ExFreePoolWithTag(n16->children[i], ART_TAG);
-        ExFreePoolWithTag(n16, ART_TAG);
+        for (int i = 0; i < 16; ++i) {
+            if (n16->children[i]) {
+                ExFreePool2(n16->children[i], ART_TAG, NULL, 0);
+            }
+        }
+        ExFreePool2(n16, ART_TAG, NULL, 0);
     }
 
     // ---------- Fuzz NODE48 ----------
@@ -566,9 +633,12 @@ BOOLEAN test_find_child_fuzzer_lcg()
         }
         TEST_ASSERT(got == expect, "FZ-N48: expected pointer must match");
 
-        for (int i = 0; i < 48; ++i)
-            if (n48->children[i]) ExFreePoolWithTag(n48->children[i], ART_TAG);
-        ExFreePoolWithTag(n48, ART_TAG);
+        for (int i = 0; i < 48; ++i) {
+            if (n48->children[i]) {
+                ExFreePool2(n48->children[i], ART_TAG, NULL, 0);
+            }
+        }
+        ExFreePool2(n48, ART_TAG, NULL, 0);
     }
 
     // ---------- Fuzz NODE256 ----------
@@ -596,16 +666,19 @@ BOOLEAN test_find_child_fuzzer_lcg()
         ART_NODE** expect = n256->children[c] ? &n256->children[c] : NULL;
         TEST_ASSERT(got == expect, "FZ-N256: expected pointer must match");
 
-        for (int i = 0; i < 256; ++i)
-            if (n256->children[i]) ExFreePoolWithTag(n256->children[i], ART_TAG);
-        ExFreePoolWithTag(n256, ART_TAG);
+        for (int i = 0; i < 256; ++i) {
+            if (n256->children[i]) {
+                ExFreePool2(n256->children[i], ART_TAG, NULL, 0);
+            }
+        }
+        ExFreePool2(n256, ART_TAG, NULL, 0);
     }
 
     // Ensure find_child itself never alloc/free'd:
     TEST_ASSERT(g_alloc_call_count >= alloc_before, "FZ-END: alloc counter progressed only by test setup");
     TEST_ASSERT(g_free_call_count >= free_before, "FZ-END: free counter progressed only by test teardown");
 
-    DbgPrint("[INFO] Fuzzer-style test: completed for all node kinds with deterministic LCG\n");
+    LOG_MSG("[INFO] Fuzzer-style test: completed for all node kinds with deterministic LCG\n");
     TEST_END("find_child: fuzzer-style (deterministic LCG)");
     return TRUE;
 }
@@ -656,9 +729,9 @@ BOOLEAN test_search_terminator_edge()
    ========================================================= */
 NTSTATUS run_all_find_child_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting find_child Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting find_child Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all_passed = TRUE;
 
@@ -671,14 +744,14 @@ NTSTATUS run_all_find_child_tests()
     if (!test_find_child_fuzzer_lcg())                all_passed = FALSE;
 
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all_passed) {
-        DbgPrint("ALL find_child TESTS PASSED!\n");
+        LOG_MSG("ALL find_child TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME find_child TESTS FAILED!\n");
+        LOG_MSG("SOME find_child TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

@@ -28,7 +28,11 @@ static ART_LEAF* t_alloc_leaf_from_buf(CONST UCHAR* src, USHORT len)
     return lf;
 }
 
-static VOID t_free_leaf(ART_LEAF* lf) { if (lf) ExFreePoolWithTag(lf, ART_TAG); }
+static VOID t_free_leaf(ART_LEAF* lf) {
+    if (lf) {
+        ExFreePool2(lf, ART_TAG, NULL, 0);
+    }
+}
 
 
 /* =========================================================
@@ -320,9 +324,9 @@ BOOLEAN test_lcp_no_allocfree_sideeffects()
    ========================================================= */
 NTSTATUS run_all_longest_common_prefix_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting longest_common_prefix() Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting longest_common_prefix() Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all_passed = TRUE;
 
@@ -335,14 +339,14 @@ NTSTATUS run_all_longest_common_prefix_tests()
     if (!test_lcp_zero_length_keys())              all_passed = FALSE; // 7
     if (!test_lcp_no_allocfree_sideeffects())      all_passed = FALSE; // 8
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all_passed) {
-        DbgPrint("ALL longest_common_prefix() TESTS PASSED!\n");
+        LOG_MSG("ALL longest_common_prefix() TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME longest_common_prefix() TESTS FAILED!\n");
+        LOG_MSG("SOME longest_common_prefix() TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

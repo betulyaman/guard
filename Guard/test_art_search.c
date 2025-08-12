@@ -103,7 +103,7 @@ BOOLEAN test_search_unicode_to_utf8_failure()
 #endif
 
 #ifndef MAX_KEY_LENGTH
-    DbgPrint("[INFO] MAX_KEY_LENGTH not defined; skipping.\n");
+    LOG_MSG("[INFO] MAX_KEY_LENGTH not defined; skipping.\n");
     TEST_END("art_search: unicode_to_utf8 failure");
     return TRUE;
 #else
@@ -123,7 +123,7 @@ BOOLEAN test_search_unicode_to_utf8_failure()
     const size_t maxL_by_unicode = (MAXUSHORT / sizeof(WCHAR)) - 1; // NUL için 1 bırak
     size_t Lsz = (size_t)MAX_KEY_LENGTH + 1;                        // overlong hedefi
     if (Lsz > maxL_by_unicode) {
-        DbgPrint("[INFO] Cannot build overlong UNICODE (MAX_KEY_LENGTH too large); skipping.\n");
+        LOG_MSG("[INFO] Cannot build overlong UNICODE (MAX_KEY_LENGTH too large); skipping.\n");
         // Temizlik
         ART_LEAF* lf = LEAF_RAW(t.root); free_leaf(&lf); t.root = NULL; t.size = 0;
         TEST_END("art_search: unicode_to_utf8 failure");
@@ -147,7 +147,7 @@ BOOLEAN test_search_unicode_to_utf8_failure()
     TEST_ASSERT(v == POLICY_NONE, "3.1: conversion failure -> POLICY_NONE");
 
     // Temizlik
-    ExFreePoolWithTag(buf, ART_TAG);
+    ExFreePool2(buf, ART_TAG, NULL, 0);
     ART_LEAF* lf = LEAF_RAW(t.root); free_leaf(&lf);
     t.root = NULL; t.size = 0;
 
@@ -468,9 +468,9 @@ BOOLEAN test_search_depth_overflow_guard()
 // =======================================
 NTSTATUS run_all_art_search_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting art_search() Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting art_search() Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all = TRUE;
 
@@ -484,14 +484,14 @@ NTSTATUS run_all_art_search_tests()
     if (!test_search_node48_and_node256())         all = FALSE; // (8)
     if (!test_search_depth_overflow_guard())       all = FALSE; // (9)
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all) {
-        DbgPrint("ALL art_search() TESTS PASSED!\n");
+        LOG_MSG("ALL art_search() TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME art_search() TESTS FAILED!\n");
+        LOG_MSG("SOME art_search() TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }

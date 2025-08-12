@@ -63,17 +63,23 @@ BOOLEAN test_prefix_mismatch_basic_within_max()
 {
     TEST_START("prefix_mismatch: basic (<= MAX_PREFIX_LENGTH)");
 
-    // (2.1) full match
+    // (2.1) full match — expected = min(prefix_length, MAX_PREFIX_LENGTH, remaining)
     reset_mock_state();
     {
         ART_NODE4* n4 = t_alloc_node4(); TEST_ASSERT(n4, "2.1-pre: node alloc");
         n4->base.type = NODE4; n4->base.num_of_child = 0;
 
-        t_set_node_prefix(&n4->base, 6, 0x20); // prefix: 0x20..0x25 (uses only first MAX_PREFIX_LENGTH bytes)
+        t_set_node_prefix(&n4->base, 6, 0x20); // intended prefix: 0x20..0x25
         PUCHAR key = t_alloc_key(20, 0x20); TEST_ASSERT(key, "2.1-pre: key alloc");
 
-        USHORT r = prefix_mismatch(&n4->base, key, 20, 0);
-        TEST_ASSERT(r == 6, "2.1: full match up to prefix length should return 6");
+        const USHORT depth = 0;
+        const USHORT remaining = (USHORT)(20 - depth);
+        const USHORT pfx_cap = (USHORT)((n4->base.prefix_length < (USHORT)MAX_PREFIX_LENGTH)
+            ? n4->base.prefix_length : (USHORT)MAX_PREFIX_LENGTH);
+        const USHORT expected = (pfx_cap < remaining) ? pfx_cap : remaining;
+
+        USHORT r = prefix_mismatch(&n4->base, key, 20, depth);
+        TEST_ASSERT(r == expected, "2.1: full match should return min(prefix, MAX_PREFIX_LENGTH, remaining)");
 
         t_free(key); t_free(n4);
     }
@@ -128,11 +134,28 @@ BOOLEAN test_prefix_mismatch_limited_by_remaining()
     ART_NODE4* n4 = t_alloc_node4(); TEST_ASSERT(n4, "3-pre: node alloc");
     n4->base.type = NODE4; n4->base.num_of_child = 0;
 
-    t_set_node_prefix(&n4->base, 10, 0x10);  // node prefix >= remaining
-    PUCHAR key = t_alloc_key(6, 0x10); TEST_ASSERT(key, "3-pre: key alloc");
+    // node->prefix_length remaining'den büyük olsun ki 'remaining' limitlesin
+    t_set_node_prefix(&n4->base, 10, 0x10);
 
-    USHORT r = prefix_mismatch(&n4->base, key, 6, 2); // remaining = 4
-    TEST_ASSERT(r == 4, "3.1: must return remaining length when all bytes match");
+    const USHORT key_len = 6;
+    PUCHAR key = t_alloc_key(key_len, 0x00); TEST_ASSERT(key, "3-pre: key alloc");
+
+    const USHORT depth = 2;
+    const USHORT remaining = (USHORT)(key_len - depth); // 4
+
+    // Beklenen karşılaştırma penceresi
+    const USHORT pfx_cap = (USHORT)((n4->base.prefix_length < (USHORT)MAX_PREFIX_LENGTH)
+        ? n4->base.prefix_length : (USHORT)MAX_PREFIX_LENGTH);
+    const USHORT cmp_len = (pfx_cap < remaining) ? pfx_cap : remaining;
+
+    // Anahtarın depth bölgesini düğüm prefix'i ile birebir eşleştir
+    // Böylece 'cmp_len' kadar tam eşleşme garanti.
+    for (USHORT i = 0; i < cmp_len; ++i) {
+        key[depth + i] = n4->base.prefix[i];
+    }
+
+    USHORT r = prefix_mismatch(&n4->base, key, key_len, depth);
+    TEST_ASSERT(r == cmp_len, "3.1: must return min(prefix, MAX_PREFIX_LENGTH, remaining)");
 
     t_free(key); t_free(n4);
 
@@ -173,7 +196,7 @@ BOOLEAN test_prefix_mismatch_extended_path()
         t_free(key); t_free(n4);
     }
 
-    // (4.2) depth > leaf->key_length , return index so far
+    // (4.2) depth > leaf->key_length , should return index accumulated so far
     reset_mock_state();
     {
         ART_NODE4* n4 = t_alloc_node4(); TEST_ASSERT(n4, "4.2-pre: node alloc");
@@ -181,15 +204,27 @@ BOOLEAN test_prefix_mismatch_extended_path()
 
         t_set_node_prefix(&n4->base, (USHORT)(MAX_PREFIX_LENGTH + 3), 0x30);
 
-        // Child leaf with short key_length (e.g., 8)
         ART_LEAF* lf = test_alloc_leaf(8, 0x30); TEST_ASSERT(lf, "4.2-pre: leaf alloc");
         n4->children[0] = SET_LEAF(lf);
 
-        PUCHAR key = t_alloc_key(20, 0x30); TEST_ASSERT(key, "4.2-pre: key alloc");
+        const USHORT key_len = 20;
+        PUCHAR key = t_alloc_key(key_len, 0x00); TEST_ASSERT(key, "4.2-pre: key alloc");
 
-        // depth past leaf length , extended loop is skipped, return index (MAX_PREFIX_LENGTH)
-        USHORT r = prefix_mismatch(&n4->base, key, 20, 10); // leaf->key_length=8, depth=10
-        TEST_ASSERT(r == MAX_PREFIX_LENGTH, "4.2: depth > leaf length , return index so far");
+        const USHORT depth = 10; // leaf->key_length = 8 ⇒ depth is past leaf length
+        const USHORT remaining = (USHORT)(key_len - depth);
+        const USHORT pfx_cap = (USHORT)((n4->base.prefix_length < (USHORT)MAX_PREFIX_LENGTH)
+            ? n4->base.prefix_length : (USHORT)MAX_PREFIX_LENGTH);
+        const USHORT expected_base = (pfx_cap < remaining) ? pfx_cap : remaining;
+
+        // *** Important: make sure the comparison window matches the node prefix ***
+        // Without this, the default test key pattern won't match the node prefix
+        // and will cause early mismatch unrelated to the intended scenario.
+        for (USHORT i = 0; i < expected_base; ++i) {
+            key[depth + i] = n4->base.prefix[i];
+        }
+
+        USHORT r = prefix_mismatch(&n4->base, key, key_len, depth);
+        TEST_ASSERT(r == expected_base, "4.2: depth past leaf => return index accumulated so far");
 
         t_free(key); t_free(lf); t_free(n4);
     }
@@ -230,7 +265,10 @@ BOOLEAN test_prefix_mismatch_extended_path()
         t_set_node_prefix(&n4->base, node_plen, 0x55);
 
         // Leaf sufficiently long so extended compare can happen
-        ART_LEAF* lf = test_alloc_leaf((USHORT)(MAX_PREFIX_LENGTH + 20), 0x55); TEST_ASSERT(lf, "4.4-pre: leaf alloc");
+        ART_LEAF* lf = test_alloc_leaf((USHORT)(MAX_PREFIX_LENGTH + 20), 0x55); 
+        TEST_ASSERT(lf, "4.4-pre: leaf alloc");
+        // Set up the key-child mapping properly for NODE4
+        n4->keys[0] = 0x01;  // Set key for the child
         n4->children[0] = SET_LEAF(lf);
 
         // Key length limits the comparison (remaining_key_length from depth=2)
@@ -244,6 +282,7 @@ BOOLEAN test_prefix_mismatch_extended_path()
         if (max_compare_length > node_plen) max_compare_length = node_plen;                 // cap by node->prefix_length
 
         USHORT r = prefix_mismatch(&n4->base, key, key_len, depth);
+        LOG_MSG("\n4.4: full match should return computed max compare length RETURNED : % d - MAX : % d\n", r, max_compare_length);
         TEST_ASSERT(r == max_compare_length, "4.4: full match should return computed max compare length");
 
         t_free(key); t_free(lf); t_free(n4);
@@ -263,18 +302,36 @@ BOOLEAN test_prefix_mismatch_with_depth_offset()
 {
     TEST_START("prefix_mismatch: depth offset");
 
+    // 5.1: mismatch after depth should return relative index 1 (or cmp_len if window < 2)
     reset_mock_state();
 
     ART_NODE4* n4 = t_alloc_node4(); TEST_ASSERT(n4, "5-pre: node alloc");
     n4->base.type = NODE4; n4->base.num_of_child = 0;
 
-    t_set_node_prefix(&n4->base, 5, 0x10);           // 10,11,12,13,14
-    PUCHAR key = t_alloc_key(10, 0x10); TEST_ASSERT(key, "5-pre: key alloc");
-    // Introduce mismatch at absolute index 3, while depth=2 , relative index=1
-    key[3] = 0x99;
+    t_set_node_prefix(&n4->base, 5, 0x10); // prefix bytes: 0x10, 0x11, 0x12, 0x13, 0x14
+    PUCHAR key = t_alloc_key(10, 0x00); TEST_ASSERT(key, "5-pre: key alloc");
 
-    USHORT r = prefix_mismatch(&n4->base, key, 10, 2);
-    TEST_ASSERT(r == 1, "5.1: mismatch after depth should return relative index 1");
+    const USHORT depth = 2;
+    const USHORT remaining = (USHORT)(10 - depth);
+    const USHORT pfx_cap = (USHORT)((n4->base.prefix_length < (USHORT)MAX_PREFIX_LENGTH)
+        ? n4->base.prefix_length : (USHORT)MAX_PREFIX_LENGTH);
+    const USHORT cmp_len = (pfx_cap < remaining) ? pfx_cap : remaining;
+
+    // *** Step 1: Align key bytes with node prefix in the compare window ***
+    // This ensures the first bytes match, so we can precisely control where the mismatch occurs.
+    for (USHORT i = 0; i < cmp_len; ++i) {
+        key[depth + i] = n4->base.prefix[i];
+    }
+
+    // *** Step 2: Inject a mismatch at relative index 1 (if enough compare length) ***
+    // This forces prefix_mismatch() to detect the mismatch at the correct position.
+    if (cmp_len >= 2) {
+        key[depth + 1] ^= 0x7F; // change the byte to something different
+    }
+
+    USHORT r = prefix_mismatch(&n4->base, key, 10, depth);
+    const USHORT expected = (cmp_len >= 2) ? 1 : cmp_len;
+    TEST_ASSERT(r == expected, "5.1: mismatch after depth should return relative index 1 (or cmp_len if window < 2)");
 
     t_free(key); t_free(n4);
 
@@ -319,9 +376,9 @@ BOOLEAN test_prefix_mismatch_no_allocfree_sideeffects()
    ========================================================= */
 NTSTATUS run_all_prefix_mismatch_tests()
 {
-    DbgPrint("\n========================================\n");
-    DbgPrint("Starting prefix_mismatch() Test Suite\n");
-    DbgPrint("========================================\n\n");
+    LOG_MSG("\n========================================\n");
+    LOG_MSG("Starting prefix_mismatch() Test Suite\n");
+    LOG_MSG("========================================\n\n");
 
     BOOLEAN all_passed = TRUE;
 
@@ -332,14 +389,14 @@ NTSTATUS run_all_prefix_mismatch_tests()
     if (!test_prefix_mismatch_with_depth_offset())      all_passed = FALSE; // 5
     if (!test_prefix_mismatch_no_allocfree_sideeffects()) all_passed = FALSE; // 6
 
-    DbgPrint("\n========================================\n");
+    LOG_MSG("\n========================================\n");
     if (all_passed) {
-        DbgPrint("ALL prefix_mismatch() TESTS PASSED!\n");
+        LOG_MSG("ALL prefix_mismatch() TESTS PASSED!\n");
     }
     else {
-        DbgPrint("SOME prefix_mismatch() TESTS FAILED!\n");
+        LOG_MSG("SOME prefix_mismatch() TESTS FAILED!\n");
     }
-    DbgPrint("========================================\n\n");
+    LOG_MSG("========================================\n\n");
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
