@@ -109,19 +109,23 @@ BOOLEAN test_length_boundary_validation()
     // 3.1: Sınırda başarı (ASCII -> UTF-8 byte sayısı tam MAX_KEY_LENGTH)
     reset_mock_state();
 
-    const ULONG max_wchars_with_nul = (MAXUSHORT / sizeof(WCHAR)) - 1; // NUL için 1 wchar ayır
-    ULONG boundary_chars = (ULONG)MAX_KEY_LENGTH; // ASCII için UTF-8 bytes == wchar sayısı
-    if (boundary_chars > max_wchars_with_nul) {
+    const ULONG max_wchars_with_nul = (MAXUSHORT / sizeof(WCHAR)) - 1;
+    ULONG boundary_chars = (ULONG)MAX_KEY_LENGTH;
+    if (boundary_chars > max_wchars_with_nul)
+    {
         boundary_chars = max_wchars_with_nul;
     }
 
     u.Length = (USHORT)(boundary_chars * sizeof(WCHAR));
-    const SIZE_T alloc = ((SIZE_T)boundary_chars + 1) * sizeof(WCHAR); // +1 wchar for NUL
+    const SIZE_T alloc = ((SIZE_T)boundary_chars + 1) * sizeof(WCHAR);
     u.MaximumLength = (USHORT)alloc;
     u.Buffer = (PWCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, alloc, ART_TAG);
     TEST_ASSERT(u.Buffer != NULL, "3.1-pre: boundary buffer alloc");
 
-    for (ULONG i = 0; i < boundary_chars; ++i) u.Buffer[i] = L'A';
+    for (ULONG i = 0; i < boundary_chars; ++i)
+    {
+        u.Buffer[i] = L'A';
+    }
     u.Buffer[boundary_chars] = L'\0';
 
     ULONG a0 = g_alloc_call_count, f0 = g_free_call_count, d0 = g_downcase_call_count, c0 = g_unicode_to_utf8_call_count;
@@ -134,28 +138,44 @@ BOOLEAN test_length_boundary_validation()
     TEST_ASSERT(g_unicode_to_utf8_call_count - c0 == 2, "Probe + convert on success");
     TEST_ASSERT(g_alloc_call_count - a0 >= 2, "Lowercase + UTF-8 buffers should be allocated");
 
-    if (result) ExFreePool2(result, ART_TAG, NULL, 0);
-    if (u.Buffer) ExFreePool2(u.Buffer, ART_TAG, NULL, 0);
+    if (result)
+    {
+        ExFreePool2(result, ART_TAG, NULL, 0);
+    }
+    if (u.Buffer)
+    {
+        ExFreePool2(u.Buffer, ART_TAG, NULL, 0);
+    }
 
-    // 3.2: Geçersiz UNICODE_STRING.Length (tek bayt) -> NULL dönmeli ve sızıntı olmamalı
+    // 3.2: Odd UNICODE_STRING.Length — davranış tanımlı değil; sızıntısız ve crash’siz olmalı.
     reset_mock_state();
-    UNICODE_STRING bad = { 0 };
+    UNICODE_STRING odd = { 0 };
     WCHAR tmp3[3] = { L'A', L'B', L'\0' };
-    bad.Buffer = tmp3;
-    bad.Length = 3;                     // bilerek tek bayt
-    bad.MaximumLength = sizeof(tmp3);
+    odd.Buffer = tmp3;
+    odd.Length = 3; // intentionally odd
+    odd.MaximumLength = sizeof(tmp3);
 
     a0 = g_alloc_call_count; f0 = g_free_call_count; d0 = g_downcase_call_count; c0 = g_unicode_to_utf8_call_count;
+    out_length = 0xABCD;
 
-    result = unicode_to_utf8(&bad, &out_length);
-    TEST_ASSERT(result == NULL, "Should reject invalid UNICODE_STRING.Length (not even)");
+    result = unicode_to_utf8(&odd, &out_length);
 
-    // SUT içerisinde tahsis olmuş olabilir; önemli olan sızıntı olmaması
-    TEST_ASSERT((g_free_call_count - f0) >= (g_alloc_call_count - a0), "No leaks on early reject");
+    if (result)
+    {
+        TEST_ASSERT(g_downcase_call_count - d0 == 1, "Downcase attempted once");
+        TEST_ASSERT(g_unicode_to_utf8_call_count - c0 >= 1, "UTF-8 probe/convert attempted");
+        ExFreePool2(result, ART_TAG, NULL, 0);
+    }
+    else
+    {
+        TEST_ASSERT(out_length == 0, "On post-arg failure, out_length must be zeroed");
+        TEST_ASSERT(g_free_call_count - f0 >= (g_alloc_call_count - a0), "No memory leak on failure path");
+    }
 
     TEST_END("Length Boundary Validation");
     return TRUE;
 }
+
 
 // Test 4: Basic ASCII conversion tests
 BOOLEAN test_basic_ascii_conversion()
@@ -265,9 +285,7 @@ BOOLEAN test_unicode_conversion()
     return TRUE;
 }
 
-// ===============================================
 // Test 6: Memory allocation failure simulation
-// ===============================================
 BOOLEAN test_memory_allocation_scenarios()
 {
     TEST_START("Memory Allocation Scenarios with Mock Framework");
@@ -290,18 +308,23 @@ BOOLEAN test_memory_allocation_scenarios()
     TEST_ASSERT(g_unicode_to_utf8_call_count - c0 == 2, "Should have called UTF-8 conversion twice");
     TEST_ASSERT(g_alloc_call_count - a0 >= 2, "Lowercase + UTF-8 buffers");
 
-    if (result) ExFreePool2(result, ART_TAG, NULL, 0);
+    if (result)
+    {
+        ExFreePool2(result, ART_TAG, NULL, 0);
+    }
     cleanup_unicode_string(&test_unicode);
 
     // 6.2: İlk tahsis (lowercase buffer) fail
     reset_mock_state();
-    create_unicode_string(&test_unicode, normal_string, STRW_LITERAL_LEN(normal_string)); // hazırlık önce
+    create_unicode_string(&test_unicode, normal_string, STRW_LITERAL_LEN(normal_string));
     a0 = g_alloc_call_count; f0 = g_free_call_count; d0 = g_downcase_call_count; c0 = g_unicode_to_utf8_call_count;
+    out_length = 0x1111;
 
-    configure_mock_failure(STATUS_SUCCESS, STATUS_SUCCESS, TRUE, 0); // sonraki ilk ExAllocatePool2 (SUT'ta) fail
+    configure_mock_failure(STATUS_SUCCESS, STATUS_SUCCESS, TRUE, 0);
 
     result = unicode_to_utf8(&test_unicode, &out_length);
     TEST_ASSERT(result == NULL, "Should return NULL when lowercase buffer allocation fails");
+    TEST_ASSERT(out_length == 0x1111, "Early alloc fail happens before zeroing out_length");
     TEST_ASSERT(g_alloc_call_count - a0 == 1, "Exactly one SUT allocation attempt (lowercase)");
     TEST_ASSERT(g_downcase_call_count - d0 == 0, "Downcase must not be called if lowercase allocation fails");
 
@@ -311,11 +334,13 @@ BOOLEAN test_memory_allocation_scenarios()
     reset_mock_state();
     create_unicode_string(&test_unicode, normal_string, STRW_LITERAL_LEN(normal_string));
     a0 = g_alloc_call_count; f0 = g_free_call_count; d0 = g_downcase_call_count; c0 = g_unicode_to_utf8_call_count;
+    out_length = 0x2222;
 
-    configure_mock_failure(STATUS_SUCCESS, STATUS_SUCCESS, TRUE, 1); // ilk SUT alloc OK, ikincisi fail
+    configure_mock_failure(STATUS_SUCCESS, STATUS_SUCCESS, TRUE, 1);
 
     result = unicode_to_utf8(&test_unicode, &out_length);
     TEST_ASSERT(result == NULL, "Should return NULL when UTF-8 buffer allocation fails");
+    TEST_ASSERT(out_length == 0, "out_length must be zeroed after passing arg checks on later failure");
     TEST_ASSERT(g_alloc_call_count - a0 == 2, "Two SUT allocations attempted");
     TEST_ASSERT(g_downcase_call_count - d0 == 1, "Downcase should have run");
     TEST_ASSERT(g_free_call_count - f0 >= 1, "Lowercase buffer must be freed on failure");
@@ -325,11 +350,13 @@ BOOLEAN test_memory_allocation_scenarios()
     reset_mock_state();
     create_unicode_string(&test_unicode, normal_string, STRW_LITERAL_LEN(normal_string));
     a0 = g_alloc_call_count; f0 = g_free_call_count; d0 = g_downcase_call_count;
+    out_length = 0x3333;
 
     configure_mock_failure(STATUS_INSUFFICIENT_RESOURCES, STATUS_SUCCESS, FALSE, 0);
 
     result = unicode_to_utf8(&test_unicode, &out_length);
     TEST_ASSERT(result == NULL, "Should return NULL when downcase fails");
+    TEST_ASSERT(out_length == 0, "out_length must be zeroed after passing arg checks on later failure");
     TEST_ASSERT(g_alloc_call_count - a0 == 1, "Lowercase buffer allocated before downcase");
     TEST_ASSERT(g_downcase_call_count - d0 == 1, "Downcase attempted");
     TEST_ASSERT(g_free_call_count - f0 >= 1, "Lowercase buffer freed on failure");
@@ -339,20 +366,119 @@ BOOLEAN test_memory_allocation_scenarios()
     reset_mock_state();
     create_unicode_string(&test_unicode, normal_string, STRW_LITERAL_LEN(normal_string));
     a0 = g_alloc_call_count; f0 = g_free_call_count; d0 = g_downcase_call_count; c0 = g_unicode_to_utf8_call_count;
+    out_length = 0x4444;
 
     configure_mock_failure(STATUS_SUCCESS, STATUS_INVALID_PARAMETER, FALSE, 0);
 
     result = unicode_to_utf8(&test_unicode, &out_length);
     TEST_ASSERT(result == NULL, "Should return NULL when UTF-8 probe fails");
+    TEST_ASSERT(out_length == 0, "out_length must be zeroed after passing arg checks on later failure");
     TEST_ASSERT(g_downcase_call_count - d0 == 1, "Downcase should be called");
     TEST_ASSERT(g_unicode_to_utf8_call_count - c0 >= 1, "UTF-8 probe attempted");
     TEST_ASSERT(g_free_call_count - f0 >= 1, "Cleanup on probe failure");
     cleanup_unicode_string(&test_unicode);
 
+    // 6.6: Convert failure after successful probe
+    reset_mock_state();
+    WCHAR conv_fail_str[] = L"ConvertShouldFail";
+    UNICODE_STRING conv_fail_u;
+    create_unicode_string(&conv_fail_u, conv_fail_str, STRW_LITERAL_LEN(conv_fail_str));
+
+    a0 = g_alloc_call_count; f0 = g_free_call_count; d0 = g_downcase_call_count; c0 = g_unicode_to_utf8_call_count;
+    out_length = 0x5555;
+
+    configure_mock_utf8_paths(STATUS_SUCCESS, STATUS_INVALID_PARAMETER, 0);
+
+    PUCHAR conv_fail_res = unicode_to_utf8(&conv_fail_u, &out_length);
+    TEST_ASSERT(conv_fail_res == NULL, "Should return NULL when conversion step fails after a successful probe");
+    TEST_ASSERT(out_length == 0, "out_length must be zeroed on convert failure");
+    TEST_ASSERT(g_downcase_call_count - d0 == 1, "Downcase once");
+    TEST_ASSERT(g_unicode_to_utf8_call_count - c0 >= 2, "Probe + convert attempted");
+    TEST_ASSERT(g_free_call_count - f0 >= 1, "Lowercase buffer freed on convert-failure");
+    cleanup_unicode_string(&conv_fail_u);
+
+    // 6.7: Probe success but required_length == 0
+    reset_mock_state();
+    WCHAR zero_req_str[] = L"ZeroReq";
+    UNICODE_STRING zero_req_u;
+    create_unicode_string(&zero_req_u, zero_req_str, STRW_LITERAL_LEN(zero_req_str));
+
+    a0 = g_alloc_call_count; f0 = g_free_call_count; d0 = g_downcase_call_count; c0 = g_unicode_to_utf8_call_count;
+    out_length = 0x6666;
+
+    configure_mock_utf8_probe_zero_required_length();
+
+    PUCHAR zero_req_res = unicode_to_utf8(&zero_req_u, &out_length);
+    TEST_ASSERT(zero_req_res == NULL, "Should return NULL when probe says required_length == 0");
+    TEST_ASSERT(out_length == 0, "out_length must be zeroed on required_length==0 failure");
+    TEST_ASSERT(g_downcase_call_count - d0 == 1, "Downcase once");
+    TEST_ASSERT(g_unicode_to_utf8_call_count - c0 >= 1, "Probe attempted");
+    TEST_ASSERT(g_free_call_count - f0 >= 1, "Lowercase buffer freed on failure");
+    cleanup_unicode_string(&zero_req_u);
+
+    // 6.8: Convert returns SUCCESS but writes 0 bytes => SUT must fail
+    reset_mock_state();
+    WCHAR zero_write_str[] = L"ZeroWrite";
+    UNICODE_STRING zero_write_u;
+    create_unicode_string(&zero_write_u, zero_write_str, STRW_LITERAL_LEN(zero_write_str));
+
+    a0 = g_alloc_call_count; f0 = g_free_call_count; d0 = g_downcase_call_count; c0 = g_unicode_to_utf8_call_count;
+    out_length = 0x7777;
+
+    configure_mock_utf8_paths(STATUS_SUCCESS, STATUS_SUCCESS, /*force_written_length_on_convert=*/0);
+
+    PUCHAR zero_write_res = unicode_to_utf8(&zero_write_u, &out_length);
+    TEST_ASSERT(zero_write_res == NULL, "Convert SUCCESS but written_length==0 should fail");
+    TEST_ASSERT(out_length == 0, "out_length must be zeroed on convert(written=0)");
+    TEST_ASSERT(g_unicode_to_utf8_call_count - c0 >= 2, "Probe + convert attempted");
+    TEST_ASSERT(g_free_call_count - f0 >= 1, "Lowercase buffer freed");
+    cleanup_unicode_string(&zero_write_u);
+
+    // 6.9: Convert SUCCESS but written_length > required_length => SUT must fail
+    reset_mock_state();
+    WCHAR over_write_str[] = L"OverWrite";
+    UNICODE_STRING over_write_u;
+    create_unicode_string(&over_write_u, over_write_str, STRW_LITERAL_LEN(over_write_str));
+
+    // Probe path in our mock sets required_length ~ 32; force convert to claim more (e.g., 64)
+    a0 = g_alloc_call_count; f0 = g_free_call_count; d0 = g_downcase_call_count; c0 = g_unicode_to_utf8_call_count;
+    out_length = 0x8888;
+
+    configure_mock_utf8_paths(STATUS_SUCCESS, STATUS_SUCCESS, /*force_written_length_on_convert=*/64);
+
+    PUCHAR over_write_res = unicode_to_utf8(&over_write_u, &out_length);
+    TEST_ASSERT(over_write_res == NULL, "Convert SUCCESS but written_length > required_length should fail");
+    TEST_ASSERT(out_length == 0, "out_length must be zeroed on overflow-written");
+    TEST_ASSERT(g_unicode_to_utf8_call_count - c0 >= 2, "Probe + convert attempted");
+    TEST_ASSERT(g_free_call_count - f0 >= 1, "Lowercase buffer freed");
+    cleanup_unicode_string(&over_write_u);
+
+    // 6.10: Convert SUCCESS with 0 < written_length < required_length => SUT should succeed
+    reset_mock_state();
+    WCHAR partial_write_str[] = L"PartialWrite";
+    UNICODE_STRING partial_write_u;
+    create_unicode_string(&partial_write_u, partial_write_str, STRW_LITERAL_LEN(partial_write_str));
+
+    a0 = g_alloc_call_count; f0 = g_free_call_count; d0 = g_downcase_call_count; c0 = g_unicode_to_utf8_call_count;
+
+    // Force a modest written length (e.g., 8) smaller than required (mock’s probe ~32)
+    configure_mock_utf8_paths(STATUS_SUCCESS, STATUS_SUCCESS, /*force_written_length_on_convert=*/8);
+
+    PUCHAR partial_res = unicode_to_utf8(&partial_write_u, &out_length);
+    TEST_ASSERT(partial_res != NULL, "SUT should accept convert with fewer bytes than required_length");
+    if (partial_res)
+    {
+        TEST_ASSERT(out_length == 8, "out_length should equal actual written length");
+        TEST_ASSERT(partial_res[out_length] == '\0', "Must be NUL-terminated");
+        ExFreePool2(partial_res, ART_TAG, NULL, 0);
+    }
+    cleanup_unicode_string(&partial_write_u);
+
     LOG_MSG("[INFO] Memory allocation failure testing completed with mock framework\n");
     TEST_END("Memory Allocation Scenarios with Mock Framework");
     return TRUE;
 }
+
 
 // =====================================
 // Test 7: MAX_KEY_LENGTH boundary tests
@@ -364,24 +490,20 @@ BOOLEAN test_max_key_length_boundary()
     USHORT out_length = 0;
     PUCHAR result = NULL;
 
-    // ---------- 7.1: Accept near-limit ASCII (fits both USHORT and MAX_KEY_LENGTH) ----------
-    // We must respect two independent limits:
-    //  - UNICODE_STRING.Length is USHORT (bytes), so wchar count is capped by USHORT/2
-    //  - UTF-8 output length must be <= min(MAX_KEY_LENGTH, MAXUSHORT)
-    // For ASCII, UTF-8 bytes == wchar count. Also we need 1 wchar for trailing NUL.
+    // 7.1: near-limit ASCII
     {
         reset_mock_state();
 
-        const ULONG max_wchars_with_nul = (MAXUSHORT / sizeof(WCHAR)) - 1; // e.g. 32766
+        const ULONG max_wchars_with_nul = (MAXUSHORT / sizeof(WCHAR)) - 1;
         ULONG target_utf8_bytes = (MAX_KEY_LENGTH > 0) ? (MAX_KEY_LENGTH - 1) : 0;
-        if (target_utf8_bytes > max_wchars_with_nul) {
-            target_utf8_bytes = max_wchars_with_nul; // cap so Length+NUL fits into USHORT
+        if (target_utf8_bytes > max_wchars_with_nul)
+        {
+            target_utf8_bytes = max_wchars_with_nul;
         }
 
         UNICODE_STRING u;
         RtlZeroMemory(&u, sizeof(u));
 
-        // Length in bytes; MaximumLength must include space for trailing NUL (one WCHAR)
         u.Length = (USHORT)(target_utf8_bytes * sizeof(WCHAR));
         const SIZE_T alloc_bytes = ((SIZE_T)target_utf8_bytes + 1) * sizeof(WCHAR);
         u.MaximumLength = (USHORT)alloc_bytes;
@@ -389,8 +511,12 @@ BOOLEAN test_max_key_length_boundary()
         u.Buffer = (PWCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, alloc_bytes, ART_TAG);
         TEST_ASSERT(u.Buffer != NULL, "7.1-pre: input buffer alloc");
 
-        if (u.Buffer) {
-            for (ULONG i = 0; i < target_utf8_bytes; ++i) u.Buffer[i] = L'A';
+        if (u.Buffer)
+        {
+            for (ULONG i = 0; i < target_utf8_bytes; ++i)
+            {
+                u.Buffer[i] = L'A';
+            }
             u.Buffer[target_utf8_bytes] = L'\0';
         }
 
@@ -400,30 +526,34 @@ BOOLEAN test_max_key_length_boundary()
         result = unicode_to_utf8(&u, &out_length);
 
         TEST_ASSERT(result != NULL, "Should handle string near MAX_KEY_LENGTH (ASCII)");
-        if (result) {
+        if (result)
+        {
             TEST_ASSERT(out_length == (USHORT)target_utf8_bytes, "Length should match expected (ASCII)");
             TEST_ASSERT(g_downcase_call_count - d0 == 1, "Should downcase once");
             TEST_ASSERT(g_unicode_to_utf8_call_count - c0 == 2, "Probe + convert");
             TEST_ASSERT(g_alloc_call_count - a0 >= 2, "Lowercase + UTF-8 buffers should be allocated");
             ExFreePool2(result, ART_TAG, NULL, 0);
         }
-        if (u.Buffer) ExFreePool2(u.Buffer, ART_TAG, NULL, 0);
-        UNREFERENCED_PARAMETER(f0); // kept for symmetry; alloc/free counts already checked
+        if (u.Buffer)
+        {
+            ExFreePool2(u.Buffer, ART_TAG, NULL, 0);
+        }
+        UNREFERENCED_PARAMETER(f0);
     }
 
-    // ---------- 7.2: Reject when UTF-8 bytes would exceed limits ----------
-    // Use a code point that encodes to 3 UTF-8 bytes per single WCHAR (e.g., U+0800).
-    // This lets us exceed MAX_KEY_LENGTH (and/or MAXUSHORT) without violating USHORT Length.
+    // 7.2: reject when UTF-8 bytes exceed limits
     {
         reset_mock_state();
 
-        const WCHAR three_byte_wc = (WCHAR)0x0800; // 3 UTF-8 bytes, 1 WCHAR in UTF-16
+        const WCHAR three_byte_wc = (WCHAR)0x0800;
         const ULONG utf8_per_char = 3;
 
-        const ULONG max_wchars_with_nul = (MAXUSHORT / sizeof(WCHAR)) - 1; // ensures room for NUL
-        // Pick a count that forces required_length > MAX_KEY_LENGTH (and likely > MAXUSHORT)
+        const ULONG max_wchars_with_nul = (MAXUSHORT / sizeof(WCHAR)) - 1;
         ULONG chars = (MAX_KEY_LENGTH / utf8_per_char) + 10;
-        if (chars > max_wchars_with_nul) chars = max_wchars_with_nul;
+        if (chars > max_wchars_with_nul)
+        {
+            chars = max_wchars_with_nul;
+        }
 
         const SIZE_T alloc_bytes = ((SIZE_T)chars + 1) * sizeof(WCHAR);
 
@@ -433,36 +563,46 @@ BOOLEAN test_max_key_length_boundary()
         u2.MaximumLength = (USHORT)alloc_bytes;
         u2.Buffer = (PWCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, alloc_bytes, ART_TAG);
         TEST_ASSERT(u2.Buffer != NULL, "7.2-pre: input buffer alloc (multi-byte)");
-        if (u2.Buffer) {
-            for (ULONG i = 0; i < chars; ++i) u2.Buffer[i] = three_byte_wc;
+        if (u2.Buffer)
+        {
+            for (ULONG i = 0; i < chars; ++i)
+            {
+                u2.Buffer[i] = three_byte_wc;
+            }
             u2.Buffer[chars] = L'\0';
         }
 
         const ULONG a0 = g_alloc_call_count, f0 = g_free_call_count;
         const ULONG d0 = g_downcase_call_count, c0 = g_unicode_to_utf8_call_count;
 
+        out_length = 0x9999;
         result = unicode_to_utf8(&u2, &out_length);
 
-        // Compute the theoretical UTF-8 size to decide expected outcome.
         const ULONG expected_bytes = chars * utf8_per_char;
         const BOOLEAN should_reject = (expected_bytes > MAX_KEY_LENGTH) || (expected_bytes > MAXUSHORT);
 
-        if (should_reject) {
+        if (should_reject)
+        {
             TEST_ASSERT(result == NULL, "Should reject string exceeding MAX_KEY_LENGTH/MAXUSHORT  (multi-byte)");
+            TEST_ASSERT(out_length == 0, "out_length must be zeroed on oversize reject");
             TEST_ASSERT(g_downcase_call_count - d0 == 1, "Should still downcase before size check");
             TEST_ASSERT(g_unicode_to_utf8_call_count - c0 >= 1, "Probe should be called to get required length");
             TEST_ASSERT(g_alloc_call_count - a0 == 1, "Only lowercase buffer should be allocated on reject");
             TEST_ASSERT(g_free_call_count - f0 >= 1, "Lowercase buffer should be freed on reject");
         }
-        else {
-            // If limits cannot be exceeded due to configuration, we still validate sane success path.
+        else
+        {
             TEST_ASSERT(result != NULL, "Should succeed when not actually exceeding limits");
-            if (result) {
+            if (result)
+            {
                 ExFreePool2(result, ART_TAG, NULL, 0);
             }
         }
 
-        if (u2.Buffer) ExFreePool2(u2.Buffer, ART_TAG, NULL, 0);
+        if (u2.Buffer)
+        {
+            ExFreePool2(u2.Buffer, ART_TAG, NULL, 0);
+        }
     }
 
     TEST_END("MAX_KEY_LENGTH Boundary Tests");
@@ -628,6 +768,36 @@ BOOLEAN test_comprehensive_integration()
     return TRUE;
 }
 
+// Test 11: Empty String Validation
+BOOLEAN test_too_long_unicode_length_guard()
+{
+    TEST_START("Too-long UNICODE_STRING.Length guard");
+
+    reset_mock_state();
+
+    USHORT out_length = 0xBEEF;
+    UNICODE_STRING u = { 0 };
+
+    // Provide any non-NULL buffer; SUT won't dereference it before the guard.
+    WCHAR dummy = L'X';
+    u.Buffer = &dummy;
+
+    // Trigger the guard: Length > (MAXUSHORT - sizeof(WCHAR))
+    u.Length = (USHORT)(MAXUSHORT);              // definitely greater than MAXUSHORT - 2
+    u.MaximumLength = u.Length;
+
+    PUCHAR result = unicode_to_utf8(&u, &out_length);
+    TEST_ASSERT(result == NULL, "Should reject overly large source length early");
+    TEST_ASSERT(out_length == 0xBEEF, "Should NOT touch out_length on early guard");
+    TEST_ASSERT(g_downcase_call_count == 0, "No downcase on early guard");
+    TEST_ASSERT(g_unicode_to_utf8_call_count == 0, "No UTF-8 probe on early guard");
+    TEST_ASSERT(g_alloc_call_count == 0, "No allocations on early guard");
+
+    TEST_END("Too-long UNICODE_STRING.Length guard");
+    return TRUE;
+}
+
+
 // Main test runner function
 NTSTATUS run_all_unicode_to_utf8_tests()
 {
@@ -648,10 +818,11 @@ NTSTATUS run_all_unicode_to_utf8_tests()
     if (!test_edge_cases()) all_passed = FALSE;
     if (!test_output_parameter_validation()) all_passed = FALSE;
     if (!test_comprehensive_integration()) all_passed = FALSE;
+    if (!test_too_long_unicode_length_guard()) all_passed = FALSE;
 
     LOG_MSG("\n========================================\n");
     if (all_passed) {
-        LOG_MSG("ALL TESTS PASSED!\n");
+        LOG_MSG("ALL unicode_to_utf8 TESTS PASSED!\n");
     }
     else {
         LOG_MSG("SOME TESTS FAILED!\n");

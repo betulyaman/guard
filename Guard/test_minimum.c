@@ -402,6 +402,126 @@ BOOLEAN test_minimum_node48_corrupt_mapped_null_returns_null()
     return TRUE;
 }
 
+// --- EXTRA: NODE48 corrupt index out-of-range -> NULL (fail fast) ---
+BOOLEAN test_minimum_node48_corrupt_index_out_of_range()
+{
+    TEST_START("minimum: NODE48 corrupt index (>48) -> NULL");
+    reset_mock_state();
+
+    ART_NODE48* n48 = t_alloc_node48(); TEST_ASSERT(n48, "pre: node48 alloc");
+    n48->base.type = NODE48;
+    n48->base.num_of_child = 1;
+
+    // map byte 5 -> 49 (geçersiz: 1..48 olmalı)
+    n48->child_index[5] = 49;
+
+    ART_LEAF* got = minimum(&n48->base);
+    TEST_ASSERT(got == NULL, "corrupt map >48 must yield NULL");
+
+    test_free_node_all(n48);
+    TEST_END("minimum: NODE48 corrupt index (>48) -> NULL");
+    return TRUE;
+}
+
+// --- EXTRA: NODE4 clamp num_of_child > 4 ---
+BOOLEAN test_minimum_node4_clamp_over_capacity()
+{
+    TEST_START("minimum: NODE4 clamp num_of_child>4");
+    reset_mock_state();
+
+    ART_NODE4* n4 = t_alloc_node4(); TEST_ASSERT(n4, "pre: node4 alloc");
+    n4->base.type = NODE4;
+    n4->base.num_of_child = 7; // kapasite üstü; traversal 0..3 arası gezmeli
+
+    // children[0..2] = NULL, children[3] = leaf -> ilk 4 slotta bulmalı
+    ART_LEAF* lf = test_alloc_leaf(3, 0x11); TEST_ASSERT(lf, "leaf alloc");
+    n4->children[3] = SET_LEAF(lf);
+
+    ART_LEAF* got = minimum(&n4->base);
+    TEST_ASSERT(got == lf, "must clamp to 4 and pick index 3");
+
+    test_free_leaf(lf);
+    test_free_node_all(n4);
+    TEST_END("minimum: NODE4 clamp num_of_child>4");
+    return TRUE;
+}
+
+// --- EXTRA: NODE16 clamp num_of_child > 16 ---
+BOOLEAN test_minimum_node16_clamp_over_capacity()
+{
+    TEST_START("minimum: NODE16 clamp num_of_child>16");
+    reset_mock_state();
+
+    ART_NODE16* n16 = t_alloc_node16(); TEST_ASSERT(n16, "pre: node16 alloc");
+    n16->base.type = NODE16;
+    n16->base.num_of_child = 23; // kapasite üstü; traversal 0..15
+
+    // children[0..14] NULL, children[15] = leaf
+    ART_LEAF* lf = test_alloc_leaf(4, 0x22); TEST_ASSERT(lf, "leaf alloc");
+    n16->children[15] = SET_LEAF(lf);
+
+    ART_LEAF* got = minimum(&n16->base);
+    TEST_ASSERT(got == lf, "must clamp to 16 and pick index 15");
+
+    test_free_leaf(lf);
+    test_free_node_all(n16);
+    TEST_END("minimum: NODE16 clamp num_of_child>16");
+    return TRUE;
+}
+
+// --- EXTRA: All descents return NULL -> overall NULL ---
+BOOLEAN test_minimum_all_paths_null()
+{
+    TEST_START("minimum: all descents -> NULL");
+    reset_mock_state();
+
+    // NODE4 -> NODE16 -> NODE48 -> NODE256; hiçbirinde yaprak yok/erişilemiyor
+    ART_NODE256* n256 = t_alloc_node256(); TEST_ASSERT(n256, "pre: n256");
+    n256->base.type = NODE256; n256->base.num_of_child = 1;
+    // n256->children[...] hepsi NULL
+
+    ART_NODE48* n48 = t_alloc_node48(); TEST_ASSERT(n48, "pre: n48");
+    n48->base.type = NODE48; n48->base.num_of_child = 1;
+    n48->child_index[0] = 1;
+    n48->children[0] = (ART_NODE*)n256; // ama altı yaprak üretmez
+
+    ART_NODE16* n16 = t_alloc_node16(); TEST_ASSERT(n16, "pre: n16");
+    n16->base.type = NODE16; n16->base.num_of_child = 1;
+    n16->children[0] = (ART_NODE*)n48;
+
+    ART_NODE4* n4 = t_alloc_node4(); TEST_ASSERT(n4, "pre: n4");
+    n4->base.type = NODE4; n4->base.num_of_child = 1;
+    n4->children[0] = (ART_NODE*)n16;
+
+    ART_LEAF* got = minimum(&n4->base);
+    TEST_ASSERT(got == NULL, "no valid leaf reachable -> NULL");
+
+    test_free_node_all(n4); // zincir serbest
+    TEST_END("minimum: all descents -> NULL");
+    return TRUE;
+}
+
+// --- EXTRA: NODE256 first non-NULL amid early NULLs ---
+BOOLEAN test_minimum_node256_first_nonnull_after_nulls()
+{
+    TEST_START("minimum: NODE256 pick first non-NULL after NULLs");
+    reset_mock_state();
+
+    ART_NODE256* n256 = t_alloc_node256(); TEST_ASSERT(n256, "pre: n256");
+    n256->base.type = NODE256; n256->base.num_of_child = 2;
+
+    // erken indeksler NULL, 9’da leaf
+    ART_LEAF* lf = test_alloc_leaf(5, 0x33); TEST_ASSERT(lf, "leaf alloc");
+    n256->children[9] = SET_LEAF(lf);
+
+    ART_LEAF* got = minimum(&n256->base);
+    TEST_ASSERT(got == lf, "first non-NULL slot must be chosen");
+
+    test_free_leaf(lf);
+    test_free_node_all(n256);
+    TEST_END("minimum: NODE256 pick first non-NULL after NULLs");
+    return TRUE;
+}
 
 /* =========================================================
    Suite Runner
@@ -424,6 +544,12 @@ NTSTATUS run_all_minimum_tests()
     if (!test_minimum_multilevel_recursion())    all_passed = FALSE;  // Test 8
     if (!test_minimum_no_allocfree_sideeffects())all_passed = FALSE;  // Test 9
     if (!test_minimum_node48_corrupt_mapped_null_returns_null())all_passed = FALSE;  // Test 10
+    if (!test_minimum_node48_corrupt_index_out_of_range()) all_passed = FALSE;
+    if (!test_minimum_node4_clamp_over_capacity())         all_passed = FALSE;
+    if (!test_minimum_node16_clamp_over_capacity())        all_passed = FALSE;
+    if (!test_minimum_all_paths_null())                    all_passed = FALSE;
+    if (!test_minimum_node256_first_nonnull_after_nulls()) all_passed = FALSE;
+
 
     LOG_MSG("\n========================================\n");
     if (all_passed) {

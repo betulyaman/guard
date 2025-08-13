@@ -5,6 +5,16 @@ STATIC NTSTATUS remove_child256(_In_ ART_NODE256* node,
     _Inout_ ART_NODE** ref,
     _In_ UCHAR c);
 
+// ---- Fault-injection convenience (normalize usage across tests) ----
+#ifndef FI_ON_NEXT_ALLOC
+#define FI_ON_NEXT_ALLOC() \
+    configure_mock_failure(STATUS_SUCCESS, STATUS_SUCCESS, TRUE, g_alloc_call_count)
+#endif
+#ifndef FI_OFF
+#define FI_OFF() \
+    configure_mock_failure(STATUS_SUCCESS, STATUS_SUCCESS, FALSE, 0)
+#endif
+
 // ---------- tiny local helpers (no CRT) ----------
 static VOID t_zero(void* p, SIZE_T n) { RtlZeroMemory(p, n); }
 
@@ -243,8 +253,7 @@ BOOLEAN test_remove_child256_alloc_failure_rollback()
     USHORT before_count = n256->base.num_of_child;
 
     // Make the *next* allocation fail (art_create_node inside shrink path)
-    g_simulate_alloc_failure = TRUE;
-    g_alloc_failure_after_count = g_alloc_call_count; // fail when count > this (i.e., next alloc)
+    FI_ON_NEXT_ALLOC();
 
     NTSTATUS st = remove_child256(n256, &ref, remove_index);
     TEST_ASSERT(st == STATUS_INSUFFICIENT_RESOURCES, "5.1: returns INSUFFICIENT_RESOURCES");
@@ -253,7 +262,7 @@ BOOLEAN test_remove_child256_alloc_failure_rollback()
     TEST_ASSERT((ART_NODE256*)ref == n256, "5.4: ref unchanged (no publish)");
 
     // Cleanup
-    g_simulate_alloc_failure = FALSE;
+    FI_OFF();
     t_free_node256_and_leaf_children(&n256);
 
     TEST_END("remove_child256: allocation failure , rollback");
@@ -348,7 +357,6 @@ NTSTATUS run_all_remove_child256_tests()
     if (!test_remove_child256_alloc_failure_rollback())             all = FALSE; // 5
     if (!test_remove_child256_branches_documentation())             all = FALSE; // 6 (doc/skip)
     if (!test_remove_child256_resize_count_mismatch_rollback())     all = FALSE; // X
-
 
     LOG_MSG("\n========================================\n");
     if (all) {

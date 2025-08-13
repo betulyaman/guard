@@ -423,6 +423,180 @@ BOOLEAN test_art_insert_no_replace_too_long_key_rejected()
     return TRUE;
 }
 
+// ========================= Test 11: New key -> existing_value == POLICY_NONE =========================
+// Yeni bir anahtar eklerken caller existing_value istediğinde POLICY_NONE dönmeli.
+BOOLEAN test_art_inr_existing_outparam_policy_none_for_new_key()
+{
+    TEST_START("art_insert_no_replace: new key -> existing_value = POLICY_NONE");
+
+    reset_mock_state();
+
+    ART_TREE tree;
+    TEST_ASSERT(NT_SUCCESS(art_init_tree(&tree)), "11-pre: init");
+
+    UNICODE_STRING us;
+    WCHAR w[2] = { L'N', L'1' };
+    TEST_ASSERT(NT_SUCCESS(create_unicode_string(&us, w, 2)), "11-pre: key");
+
+    ULONG existing = 0xDEADCAFE;
+    NTSTATUS st = art_insert_no_replace(&tree, &us, 0x11, &existing);
+    TEST_ASSERT(NT_SUCCESS(st), "11.1: insert ok");
+    TEST_ASSERT(existing == POLICY_NONE, "11.2: existing_value must be POLICY_NONE for a new key");
+    TEST_ASSERT(tree.size == 1, "11.3: size=1");
+
+    // cleanup
+    ART_LEAF* lf = LEAF_RAW(tree.root);
+    free_leaf(&lf);
+    tree.root = NULL;
+    cleanup_unicode_string(&us);
+
+    TEST_END("art_insert_no_replace: new key -> existing_value = POLICY_NONE");
+    return TRUE;
+}
+
+// ========================= Test 12: Duplicate when size == MAXULONG =========================
+// MAXULONG'dayken *aynı anahtarı* tekrar eklemek overflow değil, COLLISION olmalı ve rollback denenmemeli.
+BOOLEAN test_art_inr_duplicate_with_max_size_no_overflow()
+{
+    TEST_START("art_insert_no_replace: duplicate with size==MAXULONG -> collision");
+
+    reset_mock_state();
+
+    ART_TREE tree;
+    TEST_ASSERT(NT_SUCCESS(art_init_tree(&tree)), "12-pre: init");
+
+    UNICODE_STRING us;
+    WCHAR w[2] = { L'D', L'1' };
+    TEST_ASSERT(NT_SUCCESS(create_unicode_string(&us, w, 2)), "12-pre: key");
+
+    NTSTATUS st = art_insert_no_replace(&tree, &us, 7, NULL);
+    TEST_ASSERT(NT_SUCCESS(st), "12.1: first insert ok");
+    tree.size = MAXULONG; // sınırı zorla
+
+    ULONG free_before = g_free_call_count;
+    ULONG existing = 0;
+    st = art_insert_no_replace(&tree, &us, 99, &existing);
+    TEST_ASSERT(st == STATUS_OBJECT_NAME_COLLISION, "12.2: duplicate -> COLLISION (no overflow)");
+    TEST_ASSERT(existing == 7, "12.3: existing_value=7");
+    TEST_ASSERT(tree.size == MAXULONG, "12.4: size unchanged (MAXULONG)");
+    TEST_ASSERT(g_free_call_count >= free_before + 1, "12.5: temp UTF-8 key freed");
+
+    // cleanup
+    ART_LEAF* lf = LEAF_RAW(tree.root);
+    free_leaf(&lf);
+    tree.root = NULL;
+    cleanup_unicode_string(&us);
+
+    TEST_END("art_insert_no_replace: duplicate with size==MAXULONG -> collision");
+    return TRUE;
+}
+
+// Test 13: If the first allocation INSIDE recursive_insert fails,
+// the failure status must propagate and the temporary UTF-8 key
+// allocated by art_insert_no_replace() must be freed.
+BOOLEAN test_art_inr_recursive_insert_failure_propagates_and_frees_key()
+{
+    TEST_START("art_insert_no_replace: recursive_insert failure propagates (temp key freed)");
+
+    reset_mock_state();
+
+    ART_TREE tree;
+    TEST_ASSERT(NT_SUCCESS(art_init_tree(&tree)), "13-pre: init");
+
+    UNICODE_STRING us;
+    WCHAR w[1] = { L'R' };
+    TEST_ASSERT(NT_SUCCESS(create_unicode_string(&us, w, 1)), "13-pre: key");
+
+    // ---- PROBE PHASE: measure how many allocations unicode_to_utf8() does ----
+    ULONG alloc_probe_start = g_alloc_call_count;
+    USHORT probe_len = 0;
+    PUCHAR probe_key = unicode_to_utf8(&us, &probe_len);
+    TEST_ASSERT(probe_key != NULL && probe_len > 0, "13-probe: unicode_to_utf8 must succeed");
+    ULONG utf8_allocs = g_alloc_call_count - alloc_probe_start;
+    destroy_utf8_key(probe_key);
+
+    // Sanity: expect at least one allocation (the UTF-8 buffer)
+    TEST_ASSERT(utf8_allocs >= 1, "13-probe: unicode_to_utf8 should allocate at least once");
+
+    ULONG free_before = g_free_call_count;
+    ULONG failure_index = g_alloc_call_count + utf8_allocs + 1;
+    configure_mock_failure(STATUS_SUCCESS, STATUS_SUCCESS, TRUE, failure_index);
+
+    NTSTATUS st = art_insert_no_replace(&tree, &us, 0x33, NULL);
+
+    // 13.1: the exact failure code must propagate
+    TEST_ASSERT(st == STATUS_INSUFFICIENT_RESOURCES, "13.1: recursive_insert failure must propagate");
+
+    // 13.2: tree must remain unchanged
+    TEST_ASSERT(tree.root == NULL && tree.size == 0, "13.2: tree unchanged");
+
+    // 13.3: the temporary UTF-8 key (allocated successfully) must have been freed
+    TEST_ASSERT(g_free_call_count >= free_before + 1, "13.3: temp UTF-8 key freed");
+
+    // ---- CLEANUP ----
+    configure_mock_failure(STATUS_SUCCESS, STATUS_SUCCESS, FALSE, 0); // disable failure
+    cleanup_unicode_string(&us);
+
+    TEST_END("art_insert_no_replace: recursive_insert failure propagates (temp key freed)");
+    return TRUE;
+}
+
+
+// Test 14: Overflow rollback non-empty tree -> protet the old content
+BOOLEAN test_art_inr_overflow_rollback_preserves_existing_tree()
+{
+    TEST_START("art_insert_no_replace: overflow rollback preserves existing content");
+
+    reset_mock_state();
+
+    ART_TREE tree;
+    TEST_ASSERT(NT_SUCCESS(art_init_tree(&tree)), "14-pre: init");
+
+    UNICODE_STRING ua, ub;
+    WCHAR wa[1] = { L'a' };
+    WCHAR wb[1] = { L'b' };
+    TEST_ASSERT(NT_SUCCESS(create_unicode_string(&ua, wa, 1)), "14-pre: ua");
+    TEST_ASSERT(NT_SUCCESS(create_unicode_string(&ub, wb, 1)), "14-pre: ub");
+
+    NTSTATUS st = art_insert_no_replace(&tree, &ua, 0xAA, NULL);
+    TEST_ASSERT(NT_SUCCESS(st), "14.1: insert 'a' ok");
+    TEST_ASSERT(tree.size == 1, "14.2: size=1");
+
+    tree.size = MAXULONG;
+    ULONG free_before = g_free_call_count;
+    st = art_insert_no_replace(&tree, &ub, 0xBB, NULL);
+    TEST_ASSERT(st == STATUS_INTEGER_OVERFLOW, "14.3: overflow -> INTEGER_OVERFLOW");
+    TEST_ASSERT(tree.size == MAXULONG, "14.4: size stays MAXULONG");
+    TEST_ASSERT(g_free_call_count >= free_before + 2, "14.5: temp key + removed leaf freed");
+
+    ULONG existing = 0;
+    st = art_insert_no_replace(&tree, &ua, 0xCC, &existing);
+    TEST_ASSERT(st == STATUS_OBJECT_NAME_COLLISION, "14.6: 'a' still present -> collision");
+    TEST_ASSERT(existing == 0xAA, "14.7: existing value preserved");
+
+    if (IS_LEAF(tree.root)) {
+        ART_LEAF* lf = LEAF_RAW(tree.root);
+        free_leaf(&lf);
+        tree.root = NULL;
+    }
+    else {
+        ART_NODE4* n4 = (ART_NODE4*)tree.root;
+        for (USHORT i = 0; i < n4->base.num_of_child; i++) {
+            if (IS_LEAF(n4->children[i])) {
+                ART_LEAF* lf = LEAF_RAW(n4->children[i]);
+                free_leaf(&lf);
+                n4->children[i] = NULL;
+            }
+        }
+        ExFreePool2(n4, ART_TAG, NULL, 0);
+        tree.root = NULL;
+    }
+    cleanup_unicode_string(&ua);
+    cleanup_unicode_string(&ub);
+
+    TEST_END("art_insert_no_replace: overflow rollback preserves existing content");
+    return TRUE;
+}
 
 // ========================= Suite Runner =========================
 NTSTATUS run_all_art_insert_no_replace_tests()
@@ -443,6 +617,11 @@ NTSTATUS run_all_art_insert_no_replace_tests()
     if (!test_art_insert_no_replace_no_free_when_conversion_fails())    all = FALSE; // 8
     if (!test_art_insert_no_replace_overflow_rollback_new_key())  all = FALSE; // 9
     if (!test_art_insert_no_replace_too_long_key_rejected())      all = FALSE; // 10
+    if (!test_art_inr_existing_outparam_policy_none_for_new_key())   all = FALSE; // 11
+    if (!test_art_inr_duplicate_with_max_size_no_overflow())         all = FALSE; // 12
+    if (!test_art_inr_recursive_insert_failure_propagates_and_frees_key()) all = FALSE; // 13
+    if (!test_art_inr_overflow_rollback_preserves_existing_tree())   all = FALSE; // 14
+
 
     LOG_MSG("\n========================================\n");
     if (all) {

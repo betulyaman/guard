@@ -10,3 +10,5 @@
 #define LOG_ALLOC LOG_MSG("%s %")
 
 #endif //GUARD_LOG_H
+
+

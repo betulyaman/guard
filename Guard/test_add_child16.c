@@ -564,6 +564,183 @@ BOOLEAN test_add_child16_expand_alloc_failure()
     return TRUE;
 }
 
+BOOLEAN test_add_child16_expand_repack_null_child_fails()
+{
+    TEST_START("add_child16: expand, NULL child in repack -> DATA_ERROR");
+    reset_mock_state();
+
+    ART_NODE16* n = t_alloc_node16(); TEST_ASSERT(n, "pre");
+    // 16 dolu gibi işaretle, ama birini NULL yap
+    for (USHORT i = 0; i < 16; i++) { n->keys[i] = (UCHAR)(0x10 + i); n->children[i] = t_alloc_dummy_child(NODE4); TEST_ASSERT(n->children[i], "pre"); }
+    t_free(n->children[5]); n->children[5] = NULL;
+    n->base.num_of_child = 16;
+
+    ART_NODE* ref = (ART_NODE*)n;
+    ART_NODE* newCh = t_alloc_dummy_child(NODE4); TEST_ASSERT(newCh, "pre");
+
+    NTSTATUS st = add_child16(n, &ref, 0x05, newCh);
+    TEST_ASSERT(st == STATUS_DATA_ERROR, "repack NULL -> DATA_ERROR");
+    TEST_ASSERT(ref == (ART_NODE*)n, "ref unchanged on failure");
+
+    // cleanup
+    for (USHORT i = 0; i < 16; i++) { if (n->children[i]) { t_free(n->children[i]); n->children[i] = NULL; } }
+    t_free(newCh); t_free(n);
+    TEST_END("add_child16: expand, NULL child in repack -> DATA_ERROR");
+    return TRUE;
+}
+
+BOOLEAN test_add_child16_expand_repack_duplicate_key_fails()
+{
+    TEST_START("add_child16: expand, duplicate key in repack -> DATA_ERROR");
+    reset_mock_state();
+
+    ART_NODE16* n = t_alloc_node16(); TEST_ASSERT(n, "pre");
+    for (USHORT i = 0; i < 16; i++) { n->keys[i] = (UCHAR)(0x20 + i); n->children[i] = t_alloc_dummy_child(NODE4); TEST_ASSERT(n->children[i], "pre"); }
+    // Aynı anahtar iki kez
+    n->keys[7] = n->keys[6];
+    n->base.num_of_child = 16;
+
+    ART_NODE* ref = (ART_NODE*)n;
+    ART_NODE* newCh = t_alloc_dummy_child(NODE4); TEST_ASSERT(newCh, "pre");
+
+    NTSTATUS st = add_child16(n, &ref, 0x10, newCh);
+    TEST_ASSERT(st == STATUS_DATA_ERROR, "duplicate in repack -> DATA_ERROR");
+    TEST_ASSERT(ref == (ART_NODE*)n, "ref unchanged");
+
+    for (USHORT i = 0; i < 16; i++) { if (n->children[i]) { t_free(n->children[i]); n->children[i] = NULL; } }
+    t_free(newCh); t_free(n);
+    TEST_END("add_child16: expand, duplicate key in repack -> DATA_ERROR");
+    return TRUE;
+}
+
+BOOLEAN test_add_child16_expand_add_child48_collision()
+{
+    TEST_START("add_child16: expand, add_child48 collision bubbles up");
+    reset_mock_state();
+
+    ART_NODE16* n = t_alloc_node16(); TEST_ASSERT(n, "pre");
+    for (USHORT i = 0; i < 16; i++) {
+        n->keys[i] = (UCHAR)(0x10 + i);  // 0x10..0x1F
+        n->children[i] = t_alloc_dummy_child(NODE4);
+        TEST_ASSERT(n->children[i], "pre");
+    }
+    n->base.num_of_child = 16;
+
+    ART_NODE* ref = (ART_NODE*)n;
+    ART_NODE* newCh = t_alloc_dummy_child(NODE4); TEST_ASSERT(newCh, "pre");
+
+    // C non-duplicate (örn. 0x05), expand'i garantile
+    UCHAR c = 0x05;
+
+    // Tek seferlik add_child48 collision zorla
+    mock_add_child48_fail_once(STATUS_OBJECT_NAME_COLLISION);
+
+    ULONG free_before = g_free_call_count;
+    ULONG alloc_before = g_alloc_call_count;
+
+    NTSTATUS st = add_child16(n, &ref, c, newCh);
+
+    TEST_ASSERT(st == STATUS_OBJECT_NAME_COLLISION, "collision bubbles from add_child48");
+    TEST_ASSERT(ref == (ART_NODE*)n, "ref unchanged (publish-late)");
+    TEST_ASSERT(g_free_call_count >= free_before + 1, "temp NODE48 freed on failure");
+    TEST_ASSERT(g_alloc_call_count >= alloc_before + 1, "expansion attempted");
+
+    // cleanup
+    for (USHORT i = 0; i < 16; i++) { t_free(n->children[i]); n->children[i] = NULL; }
+    t_free(newCh); t_free(n);
+
+    TEST_END("add_child16: expand, add_child48 collision bubbles up");
+    return TRUE;
+}
+
+BOOLEAN test_add_child16_expand_copy_header_failure()
+{
+    TEST_START("add_child16: expand, copy_header failure");
+    reset_mock_state();
+
+    ART_NODE16* n = t_alloc_node16(); TEST_ASSERT(n, "pre");
+    for (USHORT i = 0; i < 16; i++) {
+        n->keys[i] = (UCHAR)(0x10 + i);
+        n->children[i] = t_alloc_dummy_child(NODE4);
+        TEST_ASSERT(n->children[i], "pre");
+    }
+    n->base.num_of_child = 16;
+
+    ART_NODE* ref = (ART_NODE*)n;
+    ART_NODE* newCh = t_alloc_dummy_child(NODE4); TEST_ASSERT(newCh, "pre");
+
+    // fail copy_header
+    mock_copy_header_fail_once(STATUS_DATA_ERROR);
+
+    ULONG free_before = g_free_call_count;
+    ULONG alloc_before = g_alloc_call_count;
+
+    NTSTATUS st = add_child16(n, &ref, 0x05, newCh); // 0x05 non-dup
+
+    TEST_ASSERT(st == STATUS_DATA_ERROR, "copy_header failure bubbles");
+    TEST_ASSERT(ref == (ART_NODE*)n, "ref unchanged");
+    TEST_ASSERT(g_alloc_call_count >= alloc_before + 1, "attempted expansion (alloc)");
+    TEST_ASSERT(g_free_call_count >= free_before + 1, "temp NODE48 freed");
+
+    TEST_ASSERT(n->base.num_of_child == 16, "no structural mutation");
+    for (USHORT i = 0; i < 16; ++i) {
+        TEST_ASSERT(n->children[i] != NULL, "children intact");
+    }
+    TEST_ASSERT(newCh != NULL, "new child still owned by caller");
+
+    for (USHORT i = 0; i < 16; i++) { t_free(n->children[i]); n->children[i] = NULL; }
+    t_free(newCh); t_free(n);
+
+    TEST_END("add_child16: expand, copy_header failure");
+    return TRUE;
+}
+
+// add_child16: full node, duplicate key short-circuits (no expand)
+BOOLEAN test_add_child16_full_duplicate_short_circuit()
+{
+    TEST_START("add_child16: full, duplicate short-circuit");
+    reset_mock_state();
+
+    ART_NODE16* n = t_alloc_node16(); TEST_ASSERT(n, "pre: node16 alloc");
+    for (USHORT i = 0; i < 16; i++) {
+        n->keys[i] = (UCHAR)(0x20 + i);
+        n->children[i] = t_alloc_dummy_child(NODE4);
+        TEST_ASSERT(n->children[i], "pre: child alloc");
+    }
+    n->base.num_of_child = 16;
+
+    ART_NODE* ref = (ART_NODE*)n;
+
+    // Choose an existing key (e.g., 0x24) to trigger duplicate path
+    UCHAR dup_key = 0x24;
+    ART_NODE* candidate = t_alloc_dummy_child(NODE4); TEST_ASSERT(candidate, "pre: candidate alloc");
+
+    ULONG alloc_before = g_alloc_call_count;
+    ULONG free_before = g_free_call_count;
+
+    NTSTATUS st = add_child16(n, &ref, dup_key, candidate);
+
+    // Must return collision, not attempt expansion
+    TEST_ASSERT(st == STATUS_OBJECT_NAME_COLLISION, "duplicate returns collision");
+    TEST_ASSERT(g_alloc_call_count == alloc_before, "no expansion attempted (no new alloc)");
+    TEST_ASSERT(g_free_call_count == free_before, "no temp structures freed");
+
+    // ref must remain pointing to original node; no structural change
+    TEST_ASSERT(ref == (ART_NODE*)n, "ref unchanged");
+    TEST_ASSERT(n->base.num_of_child == 16, "child count unchanged");
+
+    // Caller still owns 'candidate' since it was rejected; free it now
+    t_free(candidate);
+
+    // Cleanup
+    for (USHORT i = 0; i < 16; i++) {
+        t_free(n->children[i]); n->children[i] = NULL;
+    }
+    t_free(n);
+
+    TEST_END("add_child16: full, duplicate short-circuit");
+    return TRUE;
+}
 
 /* =========================================================
    Suite Runner
@@ -587,6 +764,11 @@ NTSTATUS run_all_add_child16_tests()
     if (!test_add_child16_expand_to_48_success())        all_passed = FALSE; // 9
     if (!test_add_child16_expand_to_48_count_check())    all_passed = FALSE; // 9b
     if (!test_add_child16_expand_alloc_failure())        all_passed = FALSE; // 10
+    if (!test_add_child16_expand_repack_null_child_fails())     all_passed = FALSE;
+    if (!test_add_child16_expand_repack_duplicate_key_fails())  all_passed = FALSE;
+    if (!test_add_child16_expand_add_child48_collision())       all_passed = FALSE;
+    if (!test_add_child16_expand_copy_header_failure())         all_passed = FALSE;
+    if (!test_add_child16_full_duplicate_short_circuit())       all_passed = FALSE;
 
 
     LOG_MSG("\n========================================\n");

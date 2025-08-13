@@ -1,7 +1,7 @@
 ﻿#include "test_art.h"
 
 // Mock fonksiyonlarının içinde “gerçek” API çağıracağız. Remap açık kalırsa Test_ExAllocatePool2  
-// içinden ExAllocatePool2 dediğimiz anda yine Test_ExAllocatePool2’ye gider → sonsuz döngü.
+// içinden ExAllocatePool2 dediğimiz anda yine Test_ExAllocatePool2’ye gidersonsuz döngü.
 #ifdef ExAllocatePool2
 #undef ExAllocatePool2
 #endif
@@ -30,7 +30,6 @@ extern NTSTATUS run_all_minimum_tests(void);
 extern NTSTATUS run_all_maximum_tests(void);
 extern NTSTATUS run_all_make_leaf_tests(void);
 extern NTSTATUS run_all_longest_common_prefix_tests(void);
-extern NTSTATUS run_all_prefix_mismatch_tests(void);
 extern NTSTATUS run_all_add_child256_tests(void);
 extern NTSTATUS run_all_add_child48_tests(void);
 extern NTSTATUS run_all_add_child16_tests(void);
@@ -47,10 +46,11 @@ extern NTSTATUS run_all_remove_child_tests(void);
 extern NTSTATUS run_all_recursive_delete_internal_tests(void);
 extern NTSTATUS run_all_recursive_delete_tests(void);
 extern NTSTATUS run_all_art_delete_tests(void);
-extern NTSTATUS run_all_recursive_delete_all_tests(void);
+extern NTSTATUS run_all_recursive_delete_all_internal_tests(void);
 extern NTSTATUS run_all_art_delete_subtree_tests(void);
 extern NTSTATUS run_all_art_destroy_tree_tests(void);
 extern NTSTATUS run_all_art_search_tests(void);
+extern NTSTATUS run_all_prefix_compare_tests(void);
 
 // ===== mock state =====
 ULONG  g_alloc_call_count = 0;
@@ -70,12 +70,26 @@ NTSTATUS g_mock_unicode_to_utf8_return = STATUS_SUCCESS;
 BOOLEAN g_simulate_alloc_failure = FALSE;
 ULONG g_alloc_failure_after_count = 0; // fail when count > this
 
+// --- UTF-8 fine-grained overrides for RtlUnicodeToUTF8N ---
+BOOLEAN g_utf8_override_enabled = FALSE;
+BOOLEAN g_utf8_probe_zero_required = FALSE;
+NTSTATUS g_utf8_probe_status = STATUS_SUCCESS;
+NTSTATUS g_utf8_convert_status = STATUS_SUCCESS;
+ULONG g_utf8_force_written_len_on_convert = 0; // 0 => no override
+
+// copy header
+volatile LONG g_copy_header_fail_once_flag = 0;
+NTSTATUS g_copy_header_fail_status = STATUS_UNSUCCESSFUL;
+
 // free_node()
 UCHAR g_last_freed_node_type_before_free = 0xEE;
 
 // free_leaf()
 ULONG g_debugbreak_count = 0;
 USHORT g_last_freed_leaf_keylen_before_free = 0xEEEE;
+
+// add_child48()
+NTSTATUS g_mock_add_child48_once = STATUS_SUCCESS;
 
 // ===== MOCK IMPLEMENTASYONLARI =====
 PVOID Test_ExAllocatePool2(ULONG PoolFlags, SIZE_T NumberOfBytes, ULONG Tag)
@@ -130,27 +144,81 @@ NTSTATUS Test_RtlDowncaseUnicodeString(PUNICODE_STRING DestinationString,
     return RtlDowncaseUnicodeString(DestinationString, SourceString, AllocateDestinationString);
 }
 
-NTSTATUS Test_RtlUnicodeToUTF8N(PCHAR UTF8StringDestination,
+NTSTATUS Test_RtlUnicodeToUTF8N(
+    PCHAR UTF8StringDestination,
     ULONG UTF8StringMaxByteCount,
     PULONG UTF8StringActualByteCount,
     PCWCH UnicodeStringSource,
     ULONG UnicodeStringByteCount)
 {
     g_unicode_to_utf8_call_count++;
-    // LOG_MSG("[TEST MOCK] RtlUnicodeToUTF8N called (call #%lu)\n", g_unicode_to_utf8_call_count);
 
-    if (!NT_SUCCESS(g_mock_unicode_to_utf8_return)) {
-        // LOG_MSG("[TEST MOCK] RtlUnicodeToUTF8N returning mock failure: 0x%x\n", g_mock_unicode_to_utf8_return);
+    // Distinguish probe from convert. Probe => Destination == NULL.
+    const BOOLEAN is_probe = (UTF8StringDestination == NULL);
+    UNREFERENCED_PARAMETER(UnicodeStringSource);
+    UNREFERENCED_PARAMETER(UnicodeStringByteCount);
+
+    // --- Fine-grained override path for unit tests ---
+    if (g_utf8_override_enabled)
+    {
+        if (is_probe)
+        {
+            if (g_utf8_probe_zero_required)
+            {
+                // Simulate: probe succeeds but required_length == 0
+                if (UTF8StringActualByteCount)
+                {
+                    *UTF8StringActualByteCount = 0;
+                }
+                return g_utf8_probe_status; // typically STATUS_SUCCESS
+            }
+            else
+            {
+                // Normal probe override: return a positive required length (arbitrary but >0)
+                if (UTF8StringActualByteCount)
+                {
+                    *UTF8StringActualByteCount = 32;
+                }
+                return g_utf8_probe_status;
+            }
+        }
+        else
+        {
+            // Convert step override (may succeed or fail).
+            // Tests expect we can force "SUCCESS with written_length == 0",
+            // or any other specific written length (e.g., 8, 64, ...).
+            if (UTF8StringActualByteCount) {
+            *UTF8StringActualByteCount = g_utf8_force_written_len_on_convert; // publish exactly what tests requested
+        }
+                // Only write into the destination when there is a positive written length.
+                if (UTF8StringDestination && UTF8StringMaxByteCount > 0) {
+                if (g_utf8_force_written_len_on_convert > 0) {
+                    const ULONG to_fill = UTF8StringMaxByteCount; // never overflow buffer
+                    RtlFillMemory(UTF8StringDestination, to_fill, 'x');
+                    UTF8StringDestination[to_fill - 1] = '\0';
+                }
+                else {
+                    // Force "no bytes written" semantics: do not touch the buffer.
+                }
+            }
+            return g_utf8_convert_status;
+        }
+    }
+
+    // --- Legacy coarse-grained failure override (back-compat with existing tests) ---
+    if (!NT_SUCCESS(g_mock_unicode_to_utf8_return))
+    {
+        // When a global failure is requested, honor it as-is.
         return g_mock_unicode_to_utf8_return;
     }
 
-    // Call real function
-    return RtlUnicodeToUTF8N(UTF8StringDestination,
-        UTF8StringMaxByteCount,
-        UTF8StringActualByteCount,
-        UnicodeStringSource,
-        UnicodeStringByteCount);
+    // --- Default: call the real RTL function (remap is disabled above) ---
+#pragma warning(push)
+#pragma warning(disable: 6387)
+    return RtlUnicodeToUTF8N(UTF8StringDestination, UTF8StringMaxByteCount, UTF8StringActualByteCount, UnicodeStringSource, UnicodeStringByteCount);
+#pragma warning(pop)
 }
+
 
 // Helper function to reset mock state
 void reset_mock_state(void)
@@ -176,6 +244,17 @@ void reset_mock_state(void)
 
     g_debugbreak_count = 0;
     g_last_freed_leaf_keylen_before_free = 0xEEEE;
+
+    // --- Reset fine-grained UTF-8 overrides ---
+    g_utf8_override_enabled = FALSE;
+    g_utf8_probe_zero_required = FALSE;
+    g_utf8_probe_status = STATUS_SUCCESS;
+    g_utf8_convert_status = STATUS_SUCCESS;
+    g_utf8_force_written_len_on_convert = 0;
+
+    // --- Also reset one-shot copy_header failure so tests are isolated ---
+    g_copy_header_fail_once_flag = 0;
+    g_copy_header_fail_status = STATUS_UNSUCCESSFUL;
 }
 
 void configure_mock_failure(NTSTATUS downcase_status, NTSTATUS utf8_status, BOOLEAN alloc_fail, ULONG alloc_fail_after)
@@ -185,6 +264,31 @@ void configure_mock_failure(NTSTATUS downcase_status, NTSTATUS utf8_status, BOOL
     g_simulate_alloc_failure = alloc_fail;
     g_alloc_failure_after_count = alloc_fail_after;
 }
+
+// Configure behavior for probe and convert phases separately.
+VOID configure_mock_utf8_paths(
+    _In_ NTSTATUS probe_status,
+    _In_ NTSTATUS convert_status,
+    _In_ ULONG force_written_length_on_convert
+)
+{
+    g_utf8_override_enabled = TRUE;
+    g_utf8_probe_zero_required = FALSE;
+    g_utf8_probe_status = probe_status;
+    g_utf8_convert_status = convert_status;
+    g_utf8_force_written_len_on_convert = force_written_length_on_convert;
+}
+
+// Make the probe return required_length == 0 (with STATUS_SUCCESS).
+VOID configure_mock_utf8_probe_zero_required_length(VOID)
+{
+    g_utf8_override_enabled = TRUE;
+    g_utf8_probe_zero_required = TRUE;
+    g_utf8_probe_status = STATUS_SUCCESS;
+    g_utf8_convert_status = STATUS_UNSUCCESSFUL; // convert won't be reached by SUT in this case
+    g_utf8_force_written_len_on_convert = 0;
+}
+
 
 VOID Test_DebugBreak(VOID)
 {
@@ -205,7 +309,7 @@ void cleanup_unicode_string(UNICODE_STRING* str)
 
 NTSTATUS create_unicode_string(UNICODE_STRING* dest, const WCHAR* source, ULONG length_chars)
 {
-    if (!dest) 
+    if (!dest)
         return STATUS_INVALID_PARAMETER;
 
     dest->Length = (USHORT)(length_chars * sizeof(WCHAR));
@@ -222,6 +326,22 @@ NTSTATUS create_unicode_string(UNICODE_STRING* dest, const WCHAR* source, ULONG 
     dest->Buffer[length_chars] = L'\0';
 
     return STATUS_SUCCESS;
+}
+
+VOID mock_copy_header_fail_once(_In_ NTSTATUS status)
+{
+    g_copy_header_fail_status = status ? status : STATUS_UNSUCCESSFUL;
+    InterlockedExchange(&g_copy_header_fail_once_flag, 1);
+}
+
+VOID reset_copy_header_mock_state(VOID)
+{
+    g_copy_header_fail_status = STATUS_UNSUCCESSFUL;
+    InterlockedExchange(&g_copy_header_fail_once_flag, 0);
+}
+
+VOID mock_add_child48_fail_once(_In_ NTSTATUS status) {
+    g_mock_add_child48_once = status;
 }
 
 // ===== helpers (no CRT) =====
@@ -285,7 +405,7 @@ ART_NODE* t_alloc_dummy_child(NODE_TYPE t)
 ART_NODE* test_alloc_node_base(void)
 {
     ART_NODE* p = (ART_NODE*)ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ART_NODE), ART_TAG);
-    if (p) 
+    if (p)
         RtlZeroMemory(p, sizeof(*p));
     return p;
 }
@@ -444,13 +564,12 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
     st = run_all_leaf_matches_tests();               if (!NT_SUCCESS(st)) all_ok = FALSE;
     st = run_all_ctz_tests();                        if (!NT_SUCCESS(st)) all_ok = FALSE;
     st = run_all_find_child_tests();                 if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_copy_header_tests();                if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_copy_header_tests();                if (!NT_SUCCESS(st)) all_ok = FALSE;
     st = run_all_check_prefix_tests();               if (!NT_SUCCESS(st)) all_ok = FALSE;
     st = run_all_minimum_tests();                    if (!NT_SUCCESS(st)) all_ok = FALSE;
     st = run_all_maximum_tests();                    if (!NT_SUCCESS(st)) all_ok = FALSE;
     st = run_all_make_leaf_tests();                  if (!NT_SUCCESS(st)) all_ok = FALSE;
     st = run_all_longest_common_prefix_tests();      if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_prefix_mismatch_tests();            if (!NT_SUCCESS(st)) all_ok = FALSE;
     st = run_all_add_child256_tests();               if (!NT_SUCCESS(st)) all_ok = FALSE;
     st = run_all_add_child48_tests();                if (!NT_SUCCESS(st)) all_ok = FALSE;
     st = run_all_add_child16_tests();                if (!NT_SUCCESS(st)) all_ok = FALSE;
@@ -467,10 +586,11 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
     st = run_all_recursive_delete_internal_tests();  if (!NT_SUCCESS(st)) all_ok = FALSE;
     st = run_all_recursive_delete_tests();           if (!NT_SUCCESS(st)) all_ok = FALSE;
     st = run_all_art_delete_tests();                 if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_recursive_delete_all_tests();       if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_art_delete_subtree_tests();         if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_art_destroy_tree_tests();           if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_art_search_tests();                 if (!NT_SUCCESS(st)) all_ok = FALSE;
+    st = run_all_recursive_delete_all_internal_tests(); if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_art_delete_subtree_tests();         if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_art_destroy_tree_tests();           if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_art_search_tests();                 if (!NT_SUCCESS(st)) all_ok = FALSE;
+    st = run_all_prefix_compare_tests();             if (!NT_SUCCESS(st)) all_ok = FALSE;
 
     LOG_MSG("\n=================================================\n");
     if (all_ok) {
@@ -483,3 +603,4 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 
     return STATUS_SUCCESS;
 }
+

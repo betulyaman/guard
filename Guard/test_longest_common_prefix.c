@@ -287,7 +287,6 @@ BOOLEAN test_lcp_zero_length_keys()
     return TRUE;
 }
 
-
 /* =========================================================
    Test 8: No alloc/free side-effects (sanity)
    Purpose:
@@ -318,6 +317,67 @@ BOOLEAN test_lcp_no_allocfree_sideeffects()
     return TRUE;
 }
 
+BOOLEAN test_lcp_embedded_zeros()
+{
+    TEST_START("lcp: embedded zeros");
+    reset_mock_state();
+
+    UCHAR k1[] = { 0xAA,0x00,0xBB,0xCC };
+    UCHAR k2[] = { 0xAA,0x00,0xBD,0xEE };
+    ART_LEAF* l1 = t_alloc_leaf_from_buf(k1, (USHORT)RTL_NUMBER_OF(k1));
+    ART_LEAF* l2 = t_alloc_leaf_from_buf(k2, (USHORT)RTL_NUMBER_OF(k2));
+    TEST_ASSERT(l1 && l2, "pre");
+
+    USHORT r = longest_common_prefix(l1, l2, 0);
+    TEST_ASSERT(r == 2, "AA,00 esit; 3. baytta ayrismali (2)");
+
+    t_free_leaf(l1); t_free_leaf(l2);
+    TEST_END("lcp: embedded zeros");
+    return TRUE;
+}
+
+BOOLEAN test_lcp_depth_last_byte_match_or_not()
+{
+    TEST_START("lcp: depth at last byte");
+    reset_mock_state();
+
+    UCHAR a[] = { 1,2,3,4 };
+    UCHAR b[] = { 9,8,7,4 }; // son bayt eşit
+    UCHAR c[] = { 9,8,7,5 }; // son bayt farklı
+
+    ART_LEAF* l1 = t_alloc_leaf_from_buf(a, 4);
+    ART_LEAF* l2 = t_alloc_leaf_from_buf(b, 4);
+    ART_LEAF* l3 = t_alloc_leaf_from_buf(c, 4);
+
+    USHORT r1 = longest_common_prefix(l1, l2, 3);
+    TEST_ASSERT(r1 == 1, "son bayt esitse 1");
+
+    USHORT r2 = longest_common_prefix(l1, l3, 3);
+    TEST_ASSERT(r2 == 0, "son bayt farkliysa 0");
+
+    t_free_leaf(l1); t_free_leaf(l2); t_free_leaf(l3);
+    TEST_END("lcp: depth at last byte");
+    return TRUE;
+}
+
+BOOLEAN test_lcp_offset_full_match_shorter_wins()
+{
+    TEST_START("lcp: offset full match shorter wins");
+    reset_mock_state();
+
+    UCHAR k1[] = { 0x10,0x20,0x30,0x40 };
+    UCHAR k2[] = { 0x99,0x20,0x30,0x40,0x50,0x60 };
+    ART_LEAF* l1 = t_alloc_leaf_from_buf(k1, 4);
+    ART_LEAF* l2 = t_alloc_leaf_from_buf(k2, 6);
+
+    USHORT r = longest_common_prefix(l1, l2, 1);
+    TEST_ASSERT(r == 3, "derinlik 1’den sonra kisanin kalan (3) bayti esit");
+
+    t_free_leaf(l1); t_free_leaf(l2);
+    TEST_END("lcp: offset full match shorter wins");
+    return TRUE;
+}
+
 
 /* =========================================================
    Suite Runner
@@ -338,6 +398,9 @@ NTSTATUS run_all_longest_common_prefix_tests()
     if (!test_lcp_middle_depth_end_by_shorter())   all_passed = FALSE; // 6
     if (!test_lcp_zero_length_keys())              all_passed = FALSE; // 7
     if (!test_lcp_no_allocfree_sideeffects())      all_passed = FALSE; // 8
+    if (!test_lcp_embedded_zeros())                    all_passed = FALSE;
+    if (!test_lcp_depth_last_byte_match_or_not())      all_passed = FALSE;
+    if (!test_lcp_offset_full_match_shorter_wins())    all_passed = FALSE;
 
     LOG_MSG("\n========================================\n");
     if (all_passed) {

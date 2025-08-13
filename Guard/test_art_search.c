@@ -454,7 +454,7 @@ BOOLEAN test_search_depth_overflow_guard()
     // cleanup the chain manually: delete all
     ULONG leaf_count = 0;
     ULONG node_count = 0;
-    (void)recursive_delete_all_internal(&t, t.root, &leaf_count, &node_count, 0); // <-- 5 arg
+    (void)recursive_delete_all_internal(&t, &t.root, &leaf_count, &node_count, 0); // <-- 5 arg
     t.root = NULL;
     t.size = 0;
 

@@ -105,10 +105,12 @@ BOOLEAN test_free_node_debug_poison_before_free()
     free_node(pn);
 
 #if ART_IS_DEBUG_BUILD
-    TEST_ASSERT(g_last_freed_node_type_before_free == (UCHAR)0xFF,
-        "In DEBUG build, node->type must be poisoned (0xFF) before free");
+    // The SUT captures the pre-free node->type into g_last_freed_node_type_before_free,
+    // then poisons node->type = 0xFF in-memory. The captured value must be the ORIGINAL type (2).
+    TEST_ASSERT(g_last_freed_node_type_before_free == (UCHAR)2,
+        "In DEBUG build, captured type before free must be the original type");
 #else
-    LOG_MSG("[INFO] Non-DEBUG build: poison before free is not mandatory; verifying free & NULL only\n");
+    LOG_MSG("[INFO] Non-DEBUG build: poison check skipped; verifying free & NULL only\n");
 #endif
 
     TEST_ASSERT(*pn == NULL, "Pointer is NULL after free");
@@ -118,13 +120,15 @@ BOOLEAN test_free_node_debug_poison_before_free()
     return TRUE;
 }
 
+
 // ========== Test 5: Various node types (smoke over type values) ==========
 BOOLEAN test_free_node_various_types()
 {
     TEST_START("free_node: Various Node Types");
     static const UCHAR kTypes[] = { 0, 1, 2, 3, 4, 5, 15, 31, 63, 127, 255 };
 
-    for (ULONG i = 0; i < RTL_NUMBER_OF(kTypes); ++i) {
+    for (ULONG i = 0; i < RTL_NUMBER_OF(kTypes); ++i)
+    {
         reset_mock_state();
 
         ART_NODE* n = test_alloc_node((NODE_TYPE)kTypes[i]);
@@ -138,8 +142,9 @@ BOOLEAN test_free_node_various_types()
         TEST_ASSERT(g_free_call_count == free_before + 1, "Exactly one free must occur");
 
 #if ART_IS_DEBUG_BUILD
-        TEST_ASSERT(g_last_freed_node_type_before_free == (UCHAR)0xFF,
-            "In DEBUG build, observed poisoned type (0xFF) before free");
+        // Captured value must be the original node type, not the poison value.
+        TEST_ASSERT(g_last_freed_node_type_before_free == kTypes[i],
+            "Captured pre-free type must equal the original node type");
 #else
         LOG_MSG("[INFO] Non-DEBUG: poison check skipped (i=%lu, type=%u)\n", i, kTypes[i]);
 #endif
@@ -148,6 +153,7 @@ BOOLEAN test_free_node_various_types()
     TEST_END("free_node: Various Node Types");
     return TRUE;
 }
+
 
 // ========== Test 6: Bulk free in reverse order (order-independent) ==========
 BOOLEAN test_free_node_bulk_reverse_order()
@@ -264,9 +270,9 @@ BOOLEAN test_free_node_edge_allocations()
     TEST_START("free_node: Edge Allocations");
     reset_mock_state();
 
-    // Exactly sizeof(ART_NODE); touch pattern before free
     ART_NODE* n = (ART_NODE*)ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ART_NODE), ART_TAG);
-    if (n) {
+    if (n)
+    {
         RtlFillMemory(n, sizeof(ART_NODE), 0xA5);
         n->type = (NODE_TYPE)5; // ensure type set after fill
         ART_NODE** pn = &n;
@@ -279,17 +285,44 @@ BOOLEAN test_free_node_edge_allocations()
         TEST_ASSERT(g_last_freed_tag == ART_TAG, "Used ART_TAG");
 
 #if ART_IS_DEBUG_BUILD
-        TEST_ASSERT(g_last_freed_node_type_before_free == (UCHAR)0xFF,
-            "In DEBUG, poisoned type (0xFF) must be seen before free");
+        // SUT records original type (5) into g_last_freed_node_type_before_free.
+        TEST_ASSERT(g_last_freed_node_type_before_free == (UCHAR)5,
+            "In DEBUG, captured pre-free type must be the original type (5)");
 #else
         LOG_MSG("[INFO] Non-DEBUG: poison check skipped in edge allocation test\n");
 #endif
     }
-    else {
+    else
+    {
         LOG_MSG("[TEST SKIP] Could not allocate ART_NODE for edge test\n");
     }
 
     TEST_END("free_node: Edge Allocations");
+    return TRUE;
+}
+
+// ========== Test 11: Leaf-tagged pointer should route to free_leaf ==========
+BOOLEAN test_free_node_leaf_tagged_pointer_routes_to_free_leaf()
+{
+    TEST_START("free_node: leaf-tagged pointer routes to free_leaf");
+    reset_mock_state();
+
+    // Create a real leaf, then pass SET_LEAF(leaf) casted as ART_NODE*
+    UCHAR k = 'X';
+    ART_LEAF* lf = make_leaf(&k, 1, 0xABCD);
+    TEST_ASSERT(lf != NULL, "Leaf allocation succeeded");
+
+    ART_NODE* tagged = (ART_NODE*)SET_LEAF(lf);
+    ART_NODE** ptagged = &tagged;
+
+    ULONG free_before = g_free_call_count;
+    free_node(ptagged);
+
+    // free_leaf should have freed once; free_node must not try to free the tagged pointer as a node
+    TEST_ASSERT(g_free_call_count == free_before + 1, "Exactly one free (the leaf) must occur");
+    TEST_ASSERT(*ptagged == NULL, "Pointer must be NULL after routing to free_leaf");
+
+    TEST_END("free_node: leaf-tagged pointer routes to free_leaf");
     return TRUE;
 }
 
@@ -312,6 +345,7 @@ NTSTATUS run_all_free_node_tests()
     if (!test_free_node_logging_guidance())          all_passed = FALSE;
     if (!test_free_node_pointer_isolation())         all_passed = FALSE;
     if (!test_free_node_edge_allocations())          all_passed = FALSE;
+    if (!test_free_node_leaf_tagged_pointer_routes_to_free_leaf()) all_passed = FALSE; // (11)
 
     LOG_MSG("\n========================================\n");
     if (all_passed) {

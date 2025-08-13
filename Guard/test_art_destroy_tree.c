@@ -47,9 +47,7 @@ static BOOLEAN n256_set(ART_NODE256* n256, const UCHAR* idx, USHORT cnt, ART_NOD
     return TRUE;
 }
 
-// =======================================
 // Test 1: Guard parameter checks
-// =======================================
 BOOLEAN test_destroy_guard_params()
 {
     TEST_START("art_destroy_tree: guard params");
@@ -63,9 +61,7 @@ BOOLEAN test_destroy_guard_params()
     return TRUE;
 }
 
-// =======================================
 // Test 2: Empty tree (root == NULL)
-// =======================================
 BOOLEAN test_destroy_empty_tree()
 {
     TEST_START("art_destroy_tree: empty tree");
@@ -83,9 +79,7 @@ BOOLEAN test_destroy_empty_tree()
     return TRUE;
 }
 
-// =======================================
 // Test 3: Single LEAF as root
-// =======================================
 BOOLEAN test_destroy_single_leaf_root()
 {
     TEST_START("art_destroy_tree: single leaf root");
@@ -108,9 +102,7 @@ BOOLEAN test_destroy_single_leaf_root()
     return TRUE;
 }
 
-// =======================================
 // Test 4: Small NODE4 internal with two leaves
-// =======================================
 BOOLEAN test_destroy_node4_two_leaves()
 {
     TEST_START("art_destroy_tree: NODE4 with two leaves");
@@ -140,9 +132,7 @@ BOOLEAN test_destroy_node4_two_leaves()
     return TRUE;
 }
 
-// =======================================
 // Test 5: Mixed NODE16 -> NODE48 -> NODE256 with leaves
-// =======================================
 BOOLEAN test_destroy_mixed_topology()
 {
     TEST_START("art_destroy_tree: mixed topology (16/48/256)");
@@ -190,9 +180,7 @@ BOOLEAN test_destroy_mixed_topology()
     return TRUE;
 }
 
-// =======================================
 // Test 6: Idempotency (destroy twice)
-// =======================================
 BOOLEAN test_destroy_idempotent()
 {
     TEST_START("art_destroy_tree: idempotency");
@@ -218,9 +206,7 @@ BOOLEAN test_destroy_idempotent()
     return TRUE;
 }
 
-// =======================================
 // Test 7: Error propagation (deep recursion overflow)
-// =======================================
 BOOLEAN test_destroy_propagates_failure_and_clears()
 {
     TEST_START("art_destroy_tree: propagates failure, still clears state");
@@ -310,9 +296,141 @@ BOOLEAN test_destroy_utf8_key_frees_with_tag()
     return TRUE;
 }
 
-// =======================================
+// Test X3: Empty internal node (NODE4, zero children)
+BOOLEAN test_destroy_empty_internal_node()
+{
+    TEST_START("art_destroy_tree: empty internal NODE4");
+
+    ART_NODE4* root = mk_n4();
+    TEST_ASSERT(root != NULL, "X3-pre: NODE4 allocated");
+
+    // Ensure explicitly zero children (mk_n4 already zeros, but be explicit)
+    root->base.num_of_child = 0;
+    for (int i = 0; i < 4; ++i)
+    {
+        root->children[i] = NULL;
+        root->keys[i] = 0;
+    }
+
+    ART_TREE t; dz(&t, sizeof(t));
+    t.root = (ART_NODE*)root;
+    t.size = 123; // arbitrary; should reset to 0
+
+    ULONG f0 = g_free_call_count;
+
+    NTSTATUS st = art_destroy_tree(&t);
+    TEST_ASSERT(NT_SUCCESS(st), "X3.1: success");
+    TEST_ASSERT(t.root == NULL, "X3.2: root cleared");
+    TEST_ASSERT(t.size == 0, "X3.3: size zeroed");
+    TEST_ASSERT((g_free_call_count - f0) >= 1, "X3.4: internal node freed");
+
+    TEST_END("art_destroy_tree: empty internal NODE4");
+    return TRUE;
+}
+
+// Test X4: Sparse NODE256 with edge indices (0 and 255)
+BOOLEAN test_destroy_sparse_node256_edges()
+{
+    TEST_START("art_destroy_tree: sparse NODE256 (edges 0,255)");
+
+    ART_NODE256* root256 = mk_n256();
+    TEST_ASSERT(root256 != NULL, "X4-pre: NODE256 allocated");
+
+    UCHAR i0 = 0, i255 = 255;
+    UCHAR kv0 = 'q', kv255 = 'w';
+
+    ART_LEAF* lf0 = make_leaf(&kv0, 1, 0x100);
+    ART_LEAF* lf255 = make_leaf(&kv255, 1, 0x200);
+    TEST_ASSERT(lf0 && lf255, "X4-pre: two leaves allocated");
+
+    ART_NODE* ch[2] = { (ART_NODE*)SET_LEAF(lf0), (ART_NODE*)SET_LEAF(lf255) };
+    UCHAR idx[2] = { i0, i255 };
+    TEST_ASSERT(n256_set(root256, idx, 2, ch), "X4-pre: NODE256 wired @0 and @255");
+
+    ART_TREE t; dz(&t, sizeof(t));
+    t.root = (ART_NODE*)root256;
+    t.size = 2;
+
+    ULONG a0 = g_alloc_call_count, f0 = g_free_call_count;
+
+    NTSTATUS st = art_destroy_tree(&t);
+    TEST_ASSERT(NT_SUCCESS(st), "X4.1: success");
+    TEST_ASSERT(t.root == NULL, "X4.2: root cleared");
+    TEST_ASSERT(t.size == 0, "X4.3: size zeroed");
+    TEST_ASSERT((g_free_call_count - f0) >= (g_alloc_call_count - a0), "X4.4: no leak (all freed)");
+
+    TEST_END("art_destroy_tree: sparse NODE256 (edges 0,255)");
+    return TRUE;
+}
+
+// Test X5: Allocation/free balance (no leaks)
+BOOLEAN test_destroy_alloc_free_balance()
+{
+    TEST_START("art_destroy_tree: alloc/free balance");
+
+    // Build: NODE4 -> NODE16 -> two leaves
+    ART_NODE4* n4 = mk_n4();
+    TEST_ASSERT(n4 != NULL, "X5-pre: NODE4 allocated");
+
+    ART_NODE16* n16 = mk_n16();
+    TEST_ASSERT(n16 != NULL, "X5-pre: NODE16 allocated");
+
+    UCHAR ka = 'a', kz = 'z';
+    ART_LEAF* la = make_leaf(&ka, 1, 0xAA);
+    ART_LEAF* lz = make_leaf(&kz, 1, 0xBB);
+    if (!lz) { lz = make_leaf(&kz, 1, 0xBB); }
+    TEST_ASSERT(la && lz, "X5-pre: two leaves allocated");
+
+    ART_NODE* c16[2] = { (ART_NODE*)SET_LEAF(la), (ART_NODE*)SET_LEAF(lz) };
+    UCHAR k16[2] = { (UCHAR)'1', (UCHAR)'2' };
+    TEST_ASSERT(n16_set(n16, k16, 2, c16), "X5-pre: NODE16 wired");
+
+    ART_NODE* c4[1] = { (ART_NODE*)n16 };
+    UCHAR k4[1] = { (UCHAR)'x' };
+    TEST_ASSERT(n4_set(n4, k4, 1, c4), "X5-pre: NODE4 wired");
+
+    ART_TREE t; dz(&t, sizeof(t));
+    t.root = (ART_NODE*)n4;
+    t.size = 2;
+
+    ULONG a0 = g_alloc_call_count, f0 = g_free_call_count;
+
+    NTSTATUS st = art_destroy_tree(&t);
+    TEST_ASSERT(NT_SUCCESS(st), "X5.1: success");
+    TEST_ASSERT(t.root == NULL && t.size == 0, "X5.2: cleared");
+
+    // At least all newly allocated nodes/leaves must be freed.
+    TEST_ASSERT((g_free_call_count - f0) >= (g_alloc_call_count - a0), "X5.3: no net leak for this build/destroy");
+
+    TEST_END("art_destroy_tree: alloc/free balance");
+    return TRUE;
+}
+
+// Test X6: destroy_utf8_key frees the exact pointer
+BOOLEAN test_destroy_utf8_key_records_pointer()
+{
+    TEST_START("destroy_utf8_key: records freed pointer");
+
+    reset_mock_state();
+
+    SIZE_T sz = 8;
+    PUCHAR p = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, sz, ART_TAG);
+    TEST_ASSERT(p != NULL, "X6-pre: allocation succeeded");
+    if (p) { p[0] = 0; }
+
+    destroy_utf8_key(p);
+
+    TEST_ASSERT(g_last_freed_pointer == p, "X6.1: Freed pointer should match input");
+#ifdef TRACK_LAST_FREED_TAG
+    TEST_ASSERT(g_last_freed_tag == ART_TAG, "X6.2: Freed with ART_TAG");
+#endif
+
+    TEST_END("destroy_utf8_key: records freed pointer");
+    return TRUE;
+}
+
+
 // Suite runner
-// =======================================
 NTSTATUS run_all_art_destroy_tree_tests()
 {
     LOG_MSG("\n========================================\n");
@@ -330,6 +448,11 @@ NTSTATUS run_all_art_destroy_tree_tests()
     if (!test_destroy_propagates_failure_and_clears())   all = FALSE; // (7)
     if (!test_destroy_utf8_key_null_safe())              all = FALSE; // (X1)
     if (!test_destroy_utf8_key_frees_with_tag())         all = FALSE; // (X2)
+    if (!test_destroy_empty_internal_node())              all = FALSE; // (X3)
+    if (!test_destroy_sparse_node256_edges())            all = FALSE; // (X4)
+    if (!test_destroy_alloc_free_balance())              all = FALSE; // (X5)
+    if (!test_destroy_utf8_key_records_pointer())        all = FALSE; // (X6)
+
 
     LOG_MSG("\n========================================\n");
     if (all) {

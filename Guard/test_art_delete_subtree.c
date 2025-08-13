@@ -1,4 +1,5 @@
-﻿#include "test_art.h"
+﻿// Deletes the entire subtree whose path matches 'unicode_key' as a prefix.
+#include "test_art.h"
 
 // SUT
 NTSTATUS art_delete_subtree(_Inout_ ART_TREE* tree, _In_ PCUNICODE_STRING unicode_key);
@@ -6,44 +7,186 @@ NTSTATUS art_delete_subtree(_Inout_ ART_TREE* tree, _In_ PCUNICODE_STRING unicod
 // ---------- small local helpers (no CRT) ----------
 static VOID ds_zero(void* p, SIZE_T n) { RtlZeroMemory(p, n); }
 
-static ART_NODE4* ds_make_n4(void) { return (ART_NODE4*)art_create_node(NODE4); }
-static ART_NODE16* ds_make_n16(void) { return (ART_NODE16*)art_create_node(NODE16); }
-static ART_NODE48* ds_make_n48(void) { return (ART_NODE48*)art_create_node(NODE48); }
-static ART_NODE256* ds_make_n256(void) { return (ART_NODE256*)art_create_node(NODE256); }
 
-static BOOLEAN ds_n4_set(ART_NODE4* n4, const UCHAR* keys, USHORT cnt, ART_NODE* const* ch)
+// --- Setter: add/update single-byte edge 'key[0]' -> child; only mutates on success ---
+STATIC BOOLEAN ds_n4_set(_Inout_ ART_NODE4* node4,
+    _In_reads_bytes_(key_len) const UCHAR* key,
+    _In_ USHORT key_len,
+    _Inout_ ART_NODE** child /* value to store */)
 {
-    if (!n4 || !keys || !ch || cnt > 4) return FALSE;
-    ds_zero(n4->keys, sizeof(n4->keys));
-    ds_zero(n4->children, sizeof(n4->children));
-    for (USHORT i = 0; i < cnt; i++) { n4->keys[i] = keys[i]; n4->children[i] = ch[i]; }
-    n4->base.num_of_child = cnt;
+    if (!node4 || !key || key_len == 0 || !child || !*child) {
+        LOG_MSG("ds_n4_set: invalid parameters");
+        return FALSE;
+    }
+    if (node4->base.type != NODE4) {
+        LOG_MSG("ds_n4_set: bad node type %u", node4->base.type);
+        return FALSE;
+    }
+
+    // Keep the counter as UCHAR if your header defines it that way.
+    UCHAR cnt = (UCHAR)node4->base.num_of_child;
+    if (cnt > 4) {
+        LOG_MSG("ds_n4_set: corrupt child count %u", cnt);
+        return FALSE;
+    }
+
+    UCHAR k = key[0];
+
+    // Replace existing
+    for (UCHAR i = 0; i < cnt; ++i) {
+        if (node4->keys[i] == k) {
+            node4->children[i] = *child;
+            return TRUE;
+        }
+    }
+
+    if (cnt == 4) {
+        LOG_MSG("ds_n4_set: node full");
+        return FALSE;
+    }
+
+    // Find insertion point (sorted)
+    UCHAR pos = cnt;
+    while (pos > 0 && node4->keys[pos - 1] > k) pos--;
+
+    // Shift right
+    for (UCHAR j = cnt; j > pos; --j) {
+        node4->keys[j] = node4->keys[j - 1];
+        node4->children[j] = node4->children[j - 1];
+    }
+
+    // Commit
+    node4->keys[pos] = k;
+    node4->children[pos] = *child;
+    node4->base.num_of_child = (UCHAR)(cnt + 1);
     return TRUE;
 }
+
+// Makers: ensure clean headers/body even if art_create_node stops zeroing in the future.
+STATIC ART_NODE4* ds_make_n4(void)
+{
+    ART_NODE4* n4 = (ART_NODE4*)art_create_node(NODE4);
+    if (!n4) return NULL;
+
+    // Header
+    n4->base.type = NODE4;
+    n4->base.num_of_child = 0;
+
+    n4->base.prefix_length = 0;
+    RtlZeroMemory(n4->base.prefix, sizeof n4->base.prefix);
+
+    // Body
+    RtlZeroMemory(n4->keys, sizeof n4->keys);
+    RtlZeroMemory(n4->children, sizeof n4->children);
+
+    return n4;
+}
+static ART_NODE16* ds_make_n16(void) {
+    ART_NODE16* n = (ART_NODE16*)art_create_node(NODE16);
+    if (!n) return NULL;
+    n->base.type = NODE16;
+    n->base.num_of_child = 0;
+    n->base.prefix_length = 0;
+    RtlZeroMemory(n->base.prefix, sizeof n->base.prefix);
+    RtlZeroMemory(n->keys, sizeof n->keys);
+    RtlZeroMemory(n->children, sizeof n->children);
+    return n;
+}
+static ART_NODE48* ds_make_n48(void) {
+    ART_NODE48* n = (ART_NODE48*)art_create_node(NODE48);
+    if (!n) return NULL;
+    n->base.type = NODE48;
+    n->base.num_of_child = 0;
+    n->base.prefix_length = 0;
+    RtlZeroMemory(n->base.prefix, sizeof n->base.prefix);
+    RtlZeroMemory(n->child_index, sizeof n->child_index);
+    RtlZeroMemory(n->children, sizeof n->children);
+    return n;
+}
+static ART_NODE256* ds_make_n256(void) {
+    ART_NODE256* n = (ART_NODE256*)art_create_node(NODE256);
+    if (!n) return NULL;
+    n->base.type = NODE256;
+    n->base.num_of_child = 0;
+    n->base.prefix_length = 0;
+    RtlZeroMemory(n->base.prefix, sizeof n->base.prefix);
+    RtlZeroMemory(n->children, sizeof n->children);
+    return n;
+}
+// Setters: two-pass (validate first, then write) so there’s no partial mutation on failure.
+
+// Fill NODE16 with 'cnt' pairs. Optional: require strictly increasing keys for sorted invariant.
 static BOOLEAN ds_n16_set(ART_NODE16* n16, const UCHAR* keys, USHORT cnt, ART_NODE* const* ch)
 {
     if (!n16 || !keys || !ch || cnt > 16) return FALSE;
-    ds_zero(n16->keys, sizeof(n16->keys));
-    ds_zero(n16->children, sizeof(n16->children));
-    for (USHORT i = 0; i < cnt; i++) { n16->keys[i] = keys[i]; n16->children[i] = ch[i]; }
+
+    // Validate first: non-NULL children and (optionally) strictly increasing keys.
+    for (USHORT i = 0; i < cnt; i++) {
+        if (!ch[i]) return FALSE;
+        if (i > 0 && !(keys[i - 1] < keys[i])) {
+            // If your implementation doesn’t require sorted invariants, relax this to !=
+            return FALSE;
+        }
+    }
+
+    // Commit
+    RtlZeroMemory(n16->keys, sizeof n16->keys);
+    RtlZeroMemory(n16->children, sizeof n16->children);
+    for (USHORT i = 0; i < cnt; i++) {
+        n16->keys[i] = keys[i];
+        n16->children[i] = ch[i];
+    }
     n16->base.num_of_child = cnt;
+    n16->base.type = NODE16; // defensive
     return TRUE;
 }
+// Fill NODE48 mapping. Enforce unique key_bytes and non-NULL children.
 static BOOLEAN ds_n48_map(ART_NODE48* n48, const UCHAR* key_bytes, USHORT cnt, ART_NODE* const* ch)
 {
     if (!n48 || !key_bytes || !ch || cnt > 48) return FALSE;
-    ds_zero(n48->child_index, sizeof(n48->child_index));
-    ds_zero(n48->children, sizeof(n48->children));
-    for (USHORT i = 0; i < cnt; i++) { n48->children[i] = ch[i]; n48->child_index[key_bytes[i]] = (UCHAR)(i + 1); }
+
+    // Validate first: non-NULL children and no duplicate key_bytes.
+    UCHAR seen[256]; RtlZeroMemory(seen, sizeof seen);
+    for (USHORT i = 0; i < cnt; i++) {
+        if (!ch[i]) return FALSE;
+        UCHAR k = key_bytes[i];
+        if (seen[k]) return FALSE; // duplicate key byte
+        seen[k] = 1;
+    }
+
+    // Commit
+    RtlZeroMemory(n48->child_index, sizeof n48->child_index);
+    RtlZeroMemory(n48->children, sizeof n48->children);
+    for (USHORT i = 0; i < cnt; i++) {
+        UCHAR k = key_bytes[i];
+        n48->children[i] = ch[i];
+        n48->child_index[k] = (UCHAR)(i + 1);
+    }
     n48->base.num_of_child = cnt;
+    n48->base.type = NODE48; // defensive
     return TRUE;
 }
+// Fill NODE256 at arbitrary indices. Enforce unique indices and non-NULL children.
 static BOOLEAN ds_n256_set(ART_NODE256* n256, const UCHAR* idx, USHORT cnt, ART_NODE* const* ch)
 {
     if (!n256 || !idx || !ch || cnt > 256) return FALSE;
-    ds_zero(n256->children, sizeof(n256->children));
-    for (USHORT i = 0; i < cnt; i++) { n256->children[idx[i]] = ch[i]; }
+
+    // Validate first
+    UCHAR used[256]; RtlZeroMemory(used, sizeof used);
+    for (USHORT i = 0; i < cnt; i++) {
+        if (!ch[i]) return FALSE;
+        UCHAR p = idx[i];
+        if (used[p]) return FALSE; // duplicate index
+        used[p] = 1;
+    }
+
+    // Commit
+    RtlZeroMemory(n256->children, sizeof n256->children);
+    for (USHORT i = 0; i < cnt; i++) {
+        n256->children[idx[i]] = ch[i];
+    }
     n256->base.num_of_child = cnt;
+    n256->base.type = NODE256; // defensive
     return TRUE;
 }
 
@@ -278,7 +421,7 @@ BOOLEAN test_ads_delete_internal_subtree_node4()
     // cleanup: delete remaining subtree
     if (t.root) {
         ULONG dummyL = 0, dummyN = 0;
-        (void)recursive_delete_all_internal(&t, t.root, &dummyL, &dummyN, 0);
+        (void)recursive_delete_all_internal(&t, &t.root, &dummyL, &dummyN, 0);
         t.root = NULL; t.size = 0;
     }
     cleanup_unicode_string(&ukey);
@@ -372,7 +515,7 @@ BOOLEAN test_ads_delete_internal_subtree_node256_parent()
     // Cleanup remaining
     if (t.root) {
         ULONG dummyL = 0, dummyN = 0;
-        (void)recursive_delete_all_internal(&t, t.root, &dummyL, &dummyN, 0);
+        (void)recursive_delete_all_internal(&t, &t.root, &dummyL, &dummyN, 0);
         t.root = NULL; t.size = 0;
     }
     cleanup_unicode_string(&ukey);
@@ -431,7 +574,6 @@ BOOLEAN test_ads_fallback_on_overflow_success()
     TEST_END("art_delete_subtree: fallback succeeds on deep overflow");
     return TRUE;
 }
-
 
 // ===============================
 // Suite runner

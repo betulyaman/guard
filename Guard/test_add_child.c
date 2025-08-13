@@ -1,4 +1,5 @@
-﻿#include "test_art.h"
+﻿// ========================= test_add_child.c =========================
+#include "test_art.h"
 
 // Function under test
 STATIC NTSTATUS add_child(_Inout_ ART_NODE* node,
@@ -6,9 +7,9 @@ STATIC NTSTATUS add_child(_Inout_ ART_NODE* node,
     _In_ UCHAR c,
     _In_ PVOID child);
 
-/* =========================================================
+/*
    Test 1: Guard checks
-   ========================================================= */
+   */
 BOOLEAN test_add_child_guards()
 {
     TEST_START("add_child: guards");
@@ -18,6 +19,7 @@ BOOLEAN test_add_child_guards()
     ART_NODE* hdr = t_alloc_header_only(NODE4);
     ART_NODE* ch = t_alloc_dummy_child(NODE4);
     TEST_ASSERT(hdr && ch, "1-pre: allocations");
+
 #pragma warning(push)
 #pragma warning(disable: 4566 6387)
     NTSTATUS st;
@@ -38,9 +40,9 @@ BOOLEAN test_add_child_guards()
     return TRUE;
 }
 
-/* =========================================================
+/*
    Test 2: Invalid node type dispatch
-   ========================================================= */
+   */
 BOOLEAN test_add_child_invalid_type()
 {
     TEST_START("add_child: invalid node type");
@@ -63,9 +65,9 @@ BOOLEAN test_add_child_invalid_type()
     return TRUE;
 }
 
-/* =========================================================
+/*
    Test 3: Dispatch to NODE4 (direct insert success)
-   ========================================================= */
+   */
 BOOLEAN test_add_child_dispatch_node4_success()
 {
     TEST_START("add_child: dispatch , NODE4 success");
@@ -94,9 +96,9 @@ BOOLEAN test_add_child_dispatch_node4_success()
     return TRUE;
 }
 
-/* =========================================================
+/*
    Test 4: Dispatch to NODE4 (duplicate bubbles collision)
-   ========================================================= */
+   */
 BOOLEAN test_add_child_dispatch_node4_duplicate()
 {
     TEST_START("add_child: dispatch , NODE4 duplicate");
@@ -123,9 +125,9 @@ BOOLEAN test_add_child_dispatch_node4_duplicate()
     return TRUE;
 }
 
-/* =========================================================
+/*
    Test 5: Dispatch to NODE16 (direct insert success)
-   ========================================================= */
+   */
 BOOLEAN test_add_child_dispatch_node16_success()
 {
     TEST_START("add_child: dispatch , NODE16 success");
@@ -154,9 +156,9 @@ BOOLEAN test_add_child_dispatch_node16_success()
     return TRUE;
 }
 
-/* =========================================================
+/*
    Test 6: Dispatch to NODE48 (direct insert success)
-   ========================================================= */
+   */
 BOOLEAN test_add_child_dispatch_node48_success()
 {
     TEST_START("add_child: dispatch , NODE48 success");
@@ -193,9 +195,9 @@ BOOLEAN test_add_child_dispatch_node48_success()
     return TRUE;
 }
 
-/* =========================================================
+/*
    Test 7: Dispatch to NODE256 (direct insert success)
-   ========================================================= */
+   */
 BOOLEAN test_add_child_dispatch_node256_success()
 {
     TEST_START("add_child: dispatch , NODE256 success");
@@ -225,9 +227,9 @@ BOOLEAN test_add_child_dispatch_node256_success()
     return TRUE;
 }
 
-/* =========================================================
+/*
    Test 8: Dispatch to NODE256 collision bubbles up
-   ========================================================= */
+   */
 BOOLEAN test_add_child_dispatch_node256_collision()
 {
     TEST_START("add_child: dispatch , NODE256 collision");
@@ -260,10 +262,10 @@ BOOLEAN test_add_child_dispatch_node256_collision()
     return TRUE;
 }
 
-/* =========================================================
+/*
    Test 9: Dispatch covers NODE4 expansion path (ref updated)
    (Fill NODE4 with 4 items, add one more , expands to NODE16 via add_child4)
-   ========================================================= */
+   */
 BOOLEAN test_add_child_dispatch_node4_expand_updates_ref()
 {
     TEST_START("add_child: NODE4 expansion updates ref");
@@ -281,6 +283,8 @@ BOOLEAN test_add_child_dispatch_node4_expand_updates_ref()
     TEST_ASSERT(newChild != NULL, "9-pre: new child");
 
     ART_NODE* ref = (ART_NODE*)n;
+    ULONG frees_before = g_free_call_count;
+
     NTSTATUS st = add_child((ART_NODE*)n, &ref, 0x05, newChild);
     TEST_ASSERT(NT_SUCCESS(st), "9.1: expansion succeeds");
     TEST_ASSERT(ref != (ART_NODE*)n, "9.2: ref updated by underlying add_child4");
@@ -288,6 +292,8 @@ BOOLEAN test_add_child_dispatch_node4_expand_updates_ref()
     // New ref must be NODE16 (per add_child4’s expansion logic)
     ART_NODE16* n16 = (ART_NODE16*)ref;
     TEST_ASSERT(n16->base.type == NODE16, "9.3: new type is NODE16");
+
+    TEST_ASSERT(g_free_call_count >= frees_before + 1, "9.x: old NODE4 freed (>= +1)");
 
     // New key must exist somewhere in n16
     BOOLEAN found = FALSE;
@@ -308,9 +314,111 @@ BOOLEAN test_add_child_dispatch_node4_expand_updates_ref()
     return TRUE;
 }
 
-/* =========================================================
+/*
+   NEW 10: Dispatch covers NODE16 expansion path (ref updated to NODE48)
+*/
+BOOLEAN test_add_child_dispatch_node16_expand_updates_ref()
+{
+    TEST_START("add_child: NODE16 expansion updates ref");
+
+    reset_mock_state();
+
+    ART_NODE16* n = t_alloc_node16();
+    TEST_ASSERT(n != NULL, "10-pre: node16 alloc");
+
+    // Fill 16 sorted keys: 0x10..0x1F
+    for (USHORT i = 0; i < 16; i++) {
+        n->keys[i] = (UCHAR)(0x10 + i);
+        n->children[i] = t_alloc_dummy_child(NODE4);
+        TEST_ASSERT(n->children[i] != NULL, "10-pre: child alloc");
+    }
+    n->base.num_of_child = 16;
+
+    ART_NODE* ref = (ART_NODE*)n;
+    ART_NODE* newChild = t_alloc_dummy_child(NODE16);
+    TEST_ASSERT(newChild != NULL, "10-pre: new child");
+
+    NTSTATUS st = add_child((ART_NODE*)n, &ref, 0x05 /* new minimum */, newChild);
+    TEST_ASSERT(NT_SUCCESS(st), "10.1: expansion must succeed");
+    TEST_ASSERT(ref != (ART_NODE*)n, "10.2: ref updated");
+
+    ART_NODE48* n48 = (ART_NODE48*)ref;
+    TEST_ASSERT(n48->base.type == NODE48, "10.3: new node is NODE48");
+
+    // New key present
+    TEST_ASSERT(n48->child_index[0x05] != 0, "10.4: new key mapped");
+    {
+        UCHAR slot = (UCHAR)(n48->child_index[0x05] - 1);
+        TEST_ASSERT(slot < 48 && n48->children[slot] == newChild, "10.5: new child stored");
+    }
+
+    // cleanup: free all mapped children in NODE48
+    for (USHORT i = 0; i < 256; i++) {
+        UCHAR m = n48->child_index[i];
+        if (m) {
+            UCHAR slot = (UCHAR)(m - 1);
+            if (slot < 48 && n48->children[slot]) {
+                t_free(n48->children[slot]);
+                n48->children[slot] = NULL;
+            }
+            n48->child_index[i] = 0;
+        }
+    }
+    t_free(n48);
+
+    TEST_END("add_child: NODE16 expansion updates ref");
+    return TRUE;
+}
+
+/*
+   NEW 11: Dispatch covers NODE48 expansion path (ref updated to NODE256)
+*/
+BOOLEAN test_add_child_dispatch_node48_expand_updates_ref()
+{
+    TEST_START("add_child: NODE48 expansion updates ref");
+
+    reset_mock_state();
+
+    ART_NODE48* n = t_alloc_node48();
+    TEST_ASSERT(n != NULL, "11-pre: node48 alloc");
+
+    // Seed a couple of valid mappings; mark node full to force expansion
+    ART_NODE* a = t_alloc_dummy_child(NODE4);
+    ART_NODE* b = t_alloc_dummy_child(NODE4);
+    ART_NODE* newChild = t_alloc_dummy_child(NODE16);
+    TEST_ASSERT(a && b && newChild, "11-pre: child allocs");
+
+    n->children[0] = a; n->child_index[1] = 1; // key=1   -> slot0
+    n->children[1] = b; n->child_index[200] = 2; // key=200 -> slot1
+    n->base.num_of_child = 48; // triggers expand branch
+
+    ART_NODE* ref = (ART_NODE*)n;
+
+    NTSTATUS st = add_child((ART_NODE*)n, &ref, 7 /* new key */, newChild);
+    TEST_ASSERT(NT_SUCCESS(st), "11.1: expansion must succeed");
+    TEST_ASSERT(ref != (ART_NODE*)n, "11.2: ref updated");
+    ART_NODE256* n256 = (ART_NODE256*)ref;
+    TEST_ASSERT(n256->base.type == NODE256, "11.3: new node is NODE256");
+
+    // Existing carried and new inserted
+    TEST_ASSERT(n256->children[1] == a, "11.4: key=1 carried over");
+    TEST_ASSERT(n256->children[200] == b, "11.5: key=200 carried over");
+    TEST_ASSERT(n256->children[7] == newChild, "11.6: new child inserted");
+
+    // cleanup
+    n256->children[1] = NULL;
+    n256->children[200] = NULL;
+    n256->children[7] = NULL;
+    t_free(a); t_free(b); t_free(newChild);
+    t_free(n256);
+
+    TEST_END("add_child: NODE48 expansion updates ref");
+    return TRUE;
+}
+
+/*
    Suite Runner
-   ========================================================= */
+   */
 NTSTATUS run_all_add_child_tests()
 {
     LOG_MSG("\n========================================\n");
@@ -328,6 +436,8 @@ NTSTATUS run_all_add_child_tests()
     if (!test_add_child_dispatch_node256_success())        all_passed = FALSE; // 7
     if (!test_add_child_dispatch_node256_collision())      all_passed = FALSE; // 8
     if (!test_add_child_dispatch_node4_expand_updates_ref()) all_passed = FALSE; // 9
+    if (!test_add_child_dispatch_node16_expand_updates_ref()) all_passed = FALSE; // 10
+    if (!test_add_child_dispatch_node48_expand_updates_ref()) all_passed = FALSE; // 11
 
     LOG_MSG("\n========================================\n");
     if (all_passed) {

@@ -172,7 +172,7 @@ STATIC ART_LEAF* minimum(CONST ART_NODE* node);
 STATIC ART_LEAF* maximum(CONST ART_NODE* node);
 STATIC ART_LEAF* make_leaf(CONST PUCHAR key, USHORT key_length, ULONG value);
 STATIC USHORT longest_common_prefix(CONST ART_LEAF* leaf1, CONST ART_LEAF* leaf2, USHORT depth);
-STATIC USHORT prefix_mismatch(CONST ART_NODE* node, CONST PUCHAR key, USHORT key_length, USHORT depth);
+STATIC USHORT prefix_mismatch(_In_ CONST ART_NODE* node, _In_reads_bytes_(key_length) CONST PUCHAR key, _In_ USHORT key_length, _In_ USHORT depth, _In_opt_ CONST ART_LEAF* rep_leaf);
 STATIC NTSTATUS add_child256(_Inout_ ART_NODE256* node, _Inout_ ART_NODE** ref, _In_ UCHAR c, _In_ PVOID child);
 STATIC NTSTATUS add_child48(_Inout_ ART_NODE48* node, _Inout_ ART_NODE** ref, _In_ UCHAR c, _In_ PVOID child);
 STATIC NTSTATUS add_child16(_Inout_ ART_NODE16* node, _Inout_ ART_NODE** ref, _In_ UCHAR c, _In_ PVOID child);
@@ -186,7 +186,8 @@ STATIC NTSTATUS remove_child4(_Inout_ ART_NODE4* node, _Inout_ ART_NODE** ref, _
 STATIC NTSTATUS remove_child(_In_ ART_NODE* node, _Inout_ ART_NODE** ref, _In_ UCHAR c, _In_opt_ ART_NODE** leaf);
 STATIC ART_LEAF* recursive_delete_internal(_In_ ART_NODE* node, _Inout_ ART_NODE** ref, _In_reads_bytes_(key_length) CONST PUCHAR key, _In_ USHORT key_length, _In_ USHORT depth, _In_ USHORT recursion_depth);
 STATIC ART_LEAF* recursive_delete(_In_opt_ ART_NODE* node, _Inout_ ART_NODE** ref, _In_reads_bytes_(key_length) CONST PUCHAR key, _In_ USHORT key_length, _In_ USHORT depth);
-STATIC NTSTATUS recursive_delete_all_internal(_Inout_ ART_TREE* tree, _In_opt_ ART_NODE* node, _Inout_ PULONG leaf_count, _Inout_ PULONG node_count, _In_ USHORT recursion_depth);
+STATIC NTSTATUS recursive_delete_all_internal(_Inout_ ART_TREE* tree, _Inout_ ART_NODE** slot, _Inout_ PULONG leaf_count, _Inout_ PULONG node_count, _In_ USHORT recursion_depth);
+STATIC NTSTATUS force_delete_all_iterative(_Inout_ ULONG* leaf_count, _Inout_ ULONG* node_count, _Inout_ ART_NODE** proot);
 
 VOID art_print_tree(_In_opt_ ART_TREE* tree);
 VOID art_print_subtree(_In_opt_ ART_NODE* subtree_root, _In_z_ const char* description);

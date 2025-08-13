@@ -6,7 +6,6 @@ STATIC NTSTATUS add_child4(_Inout_ ART_NODE4* node,
     _In_ UCHAR c,
     _In_ PVOID child);
 
-// Fill node4 with cnt (<=4) ascending keys starting at start
 /* =========================================================
    Test 1: Guard checks
    ========================================================= */
@@ -23,13 +22,22 @@ BOOLEAN test_add_child4_guards()
     ULONG a0 = g_alloc_call_count, f0 = g_free_call_count;
 
     NTSTATUS st;
+#pragma warning(push)
+#pragma warning(disable: 6387)
     st = add_child4(NULL, NULL, 0, ch);
+#pragma warning(pop)
     TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "1.1: NULL node must be rejected");
 
+#pragma warning(push)
+#pragma warning(disable: 6387)
     st = add_child4(n, NULL, 1, ch);
+#pragma warning(pop)
     TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "1.2: NULL ref must be rejected");
 
+#pragma warning(push)
+#pragma warning(disable: 6387)
     st = add_child4(n, (ART_NODE**)&n, 2, NULL);
+#pragma warning(pop)
     TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "1.3: NULL child must be rejected");
 
     TEST_ASSERT(g_alloc_call_count == a0 && g_free_call_count == f0, "1.x: no internal alloc/free on guards");
@@ -317,11 +325,6 @@ BOOLEAN test_add_child4_no_allocfree_direct()
 
 /* =========================================================
    Test 9: Full node , expand to NODE16 (happy path)
-   Verifies:
-     - *ref updated to NODE16
-     - keys/children copied
-     - new key inserted by add_child16
-     - old NODE4 freed
    ========================================================= */
 BOOLEAN test_add_child4_expand_to_16_success()
 {
@@ -332,7 +335,6 @@ BOOLEAN test_add_child4_expand_to_16_success()
     ART_NODE4* n = t_alloc_node4();
     TEST_ASSERT(n != NULL, "9-pre: node4 alloc");
 
-    // Fill 4 entries sorted: 0x10,0x20,0x30,0x40
     TEST_ASSERT(t_seed_node4_sorted(n, 4, 0x10), "9-pre: seed 4");
     n->keys[0] = 0x10; n->keys[1] = 0x20; n->keys[2] = 0x30; n->keys[3] = 0x40;
 
@@ -340,7 +342,7 @@ BOOLEAN test_add_child4_expand_to_16_success()
     ART_NODE* newChild = t_alloc_dummy_child(NODE16);
     TEST_ASSERT(newChild != NULL, "9-pre: new child");
 
-    ULONG free_before = g_free_call_count;
+    ULONG frees_before = g_free_call_count;
 
     // Insert a new smallest key: 0x05 , triggers expansion
     NTSTATUS st = add_child4(n, &ref, 0x05, newChild);
@@ -350,16 +352,12 @@ BOOLEAN test_add_child4_expand_to_16_success()
     ART_NODE16* n16 = (ART_NODE16*)ref;
     TEST_ASSERT(n16->base.type == NODE16, "9.3: new node type is NODE16");
 
-    // old node freed
-    TEST_ASSERT(g_free_call_count >= free_before + 1, "9.4: old NODE4 freed");
+    // old node freed (>= +1 güvenli)
+    TEST_ASSERT(g_free_call_count >= frees_before + 1, "9.4: old NODE4 freed (>= +1)");
 
-    // Copied the original 4 children and keys into n16[0..3]
-    // (We can verify the keys copied in order)
     TEST_ASSERT(n16->keys[0] == 0x10 && n16->keys[1] == 0x20 &&
         n16->keys[2] == 0x30 && n16->keys[3] == 0x40, "9.5: keys copied to NODE16");
 
-    // New child inserted at key 0x05 somewhere (likely at front after add_child16)
-    // Verify presence by scanning keys array for 0x05 and matching child_index
     BOOLEAN foundNew = FALSE;
     for (USHORT i = 0; i < n16->base.num_of_child; i++) {
         if (n16->keys[i] == 0x05) {
@@ -370,7 +368,6 @@ BOOLEAN test_add_child4_expand_to_16_success()
     }
     TEST_ASSERT(foundNew, "9.7: new key present in NODE16");
 
-    // cleanup: detach to avoid double frees
     t_free_children16(n16);
     t_free(n16);
 
@@ -379,8 +376,7 @@ BOOLEAN test_add_child4_expand_to_16_success()
 }
 
 /* =========================================================
-   Test 9b: Expand success — verify new_node->base.num_of_child = 5
-   (old 4 + the new inserted child)
+   Test 9b: Expand success — count check
    ========================================================= */
 BOOLEAN test_add_child4_expand_to_16_count_check()
 {
@@ -416,10 +412,6 @@ BOOLEAN test_add_child4_expand_to_16_count_check()
 
 /* =========================================================
    Test 10: Full node , expand to NODE16 but art_create_node fails
-   Expect:
-     - STATUS_INSUFFICIENT_RESOURCES
-     - *ref remains old node
-     - no frees performed by add_child4
    ========================================================= */
 BOOLEAN test_add_child4_expand_alloc_failure()
 {
@@ -457,6 +449,88 @@ BOOLEAN test_add_child4_expand_alloc_failure()
     return TRUE;
 }
 
+/* =========================================================
+   NEW 11: Direct insert into empty node
+   ========================================================= */
+BOOLEAN test_add_child4_insert_into_empty()
+{
+    TEST_START("add_child4: direct insert into empty");
+
+    reset_mock_state();
+
+    ART_NODE4* n = t_alloc_node4();
+    TEST_ASSERT(n, "11-pre: node4 alloc");
+    n->base.num_of_child = 0;
+
+    ART_NODE* ch = t_alloc_dummy_child(NODE4);
+    TEST_ASSERT(ch, "11-pre: child alloc");
+
+    ART_NODE* ref = (ART_NODE*)n;
+    NTSTATUS st = add_child4(n, &ref, 0x33, ch);
+    TEST_ASSERT(NT_SUCCESS(st), "11.1: should insert into empty");
+    TEST_ASSERT(n->base.num_of_child == 1, "11.2: count=1");
+    TEST_ASSERT(n->keys[0] == 0x33, "11.3: key placed at 0");
+    TEST_ASSERT(n->children[0] == ch, "11.4: child pointer placed");
+    TEST_ASSERT(ref == (ART_NODE*)n, "11.5: ref unchanged");
+
+    // cleanup
+    n->children[0] = NULL;
+    t_free(ch);
+    t_free(n);
+
+    TEST_END("add_child4: direct insert into empty");
+    return TRUE;
+}
+
+/* =========================================================
+   NEW 12: Corrupted count (>4) — expand path clamps safely (strict=0)
+           or errors out (strict=1)
+   ========================================================= */
+BOOLEAN test_add_child4_expand_clamp_or_strict()
+{
+    TEST_START("add_child4: expand with corrupted count");
+
+    reset_mock_state();
+
+    ART_NODE4* n = t_alloc_node4();
+    TEST_ASSERT(n, "12-pre: node4 alloc");
+
+    // Prepare 4 valid entries
+    n->keys[0] = 0x10; n->children[0] = t_alloc_dummy_child(NODE4);
+    n->keys[1] = 0x20; n->children[1] = t_alloc_dummy_child(NODE4);
+    n->keys[2] = 0x30; n->children[2] = t_alloc_dummy_child(NODE4);
+    n->keys[3] = 0x40; n->children[3] = t_alloc_dummy_child(NODE4);
+    TEST_ASSERT(n->children[0] && n->children[1] && n->children[2] && n->children[3], "12-pre: child allocs");
+
+    n->base.type = NODE4;
+    n->base.num_of_child = 7; // corrupted count -> expand branch
+
+    ART_NODE* ref = (ART_NODE*)n;
+    ART_NODE* newChild = t_alloc_dummy_child(NODE16);
+    TEST_ASSERT(newChild, "12-pre: new child");
+
+    NTSTATUS st = add_child4(n, &ref, 0x05, newChild);
+
+#if ART_STRICT_NODE4_VERIFY
+    TEST_ASSERT(st == STATUS_DATA_ERROR, "12.1(strict): expect DATA_ERROR");
+    // cleanup original
+    for (int i = 0; i < 4; i++) { t_free(n->children[i]); n->children[i] = NULL; }
+    t_free(newChild);
+    t_free(n);
+#else
+    TEST_ASSERT(NT_SUCCESS(st), "12.1: expect success with clamping");
+    TEST_ASSERT(ref && ((ART_NODE*)ref)->type == NODE16, "12.2: expanded to NODE16");
+    ART_NODE16* n16 = (ART_NODE16*)ref;
+    TEST_ASSERT(n16->base.num_of_child == 5, "12.3: 4 survivors + 1 new = 5");
+
+    // cleanup
+    t_free_children16(n16);
+    t_free(n16);
+#endif
+
+    TEST_END("add_child4: expand with corrupted count");
+    return TRUE;
+}
 
 /* =========================================================
    Suite Runner
@@ -478,8 +552,10 @@ NTSTATUS run_all_add_child4_tests()
     if (!test_add_child4_multiple_inserts_sorted())   all_passed = FALSE; // 7
     if (!test_add_child4_no_allocfree_direct())       all_passed = FALSE; // 8
     if (!test_add_child4_expand_to_16_success())      all_passed = FALSE; // 9
-    if (!test_add_child4_expand_to_16_count_check())   all_passed = FALSE; // 9b
-    if (!test_add_child4_expand_alloc_failure())       all_passed = FALSE; // 10
+    if (!test_add_child4_expand_to_16_count_check())  all_passed = FALSE; // 9b
+    if (!test_add_child4_expand_alloc_failure())      all_passed = FALSE; // 10
+    if (!test_add_child4_insert_into_empty())         all_passed = FALSE; // 11
+    if (!test_add_child4_expand_clamp_or_strict())    all_passed = FALSE; // 12
 
     LOG_MSG("\n========================================\n");
     if (all_passed) {

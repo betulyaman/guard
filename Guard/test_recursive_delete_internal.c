@@ -208,7 +208,6 @@ BOOLEAN test_recursive_delete_internal_guards()
     UCHAR keyB[1] = { 'b' };
     ART_NODE* ref = NULL;
 
-    // All NULL-ish / invalid combos
 #pragma warning(push)
 #pragma warning(disable: 6387)
     ART_LEAF* out = recursive_delete_internal(NULL, NULL, NULL, 0, 0, 0);
@@ -229,7 +228,6 @@ BOOLEAN test_recursive_delete_internal_guards()
 #pragma warning(disable: 6387)
     out = recursive_delete_internal((ART_NODE*)n4, &ref, NULL, 1, 0, 0);
 #pragma warning(pop)
-
     TEST_ASSERT(out == NULL, "1.4: NULL key");
 
     out = recursive_delete_internal((ART_NODE*)n4, &ref, keyB, 0, 0, 0);
@@ -264,7 +262,6 @@ BOOLEAN test_recursive_delete_internal_leaf_match()
     TEST_ASSERT(out == lf, "2.1: returns the matched leaf");
     TEST_ASSERT(ref == NULL, "2.2: ref cleared for removed leaf");
 
-    // cleanup: free the returned leaf
     if (out) free_leaf(&out);
 
     TEST_END("recursive_delete_internal: leaf match");
@@ -292,7 +289,6 @@ BOOLEAN test_recursive_delete_internal_leaf_no_match()
     TEST_ASSERT(out == NULL, "3.1: returns NULL when not matching leaf");
     TEST_ASSERT(ref == encoded, "3.2: ref unchanged");
 
-    // cleanup
     free_leaf(&lf);
 
     TEST_END("recursive_delete_internal: leaf no match");
@@ -310,7 +306,6 @@ BOOLEAN test_recursive_delete_internal_prefix_mismatch()
 
     ART_NODE* ref = NULL;
     ART_LEAF* leaf = NULL;
-    // Node stores prefix 'x', but we search key starting with 'y' -> mismatch.
     ART_NODE4* n4 = t_make_node4_with_prefix_and_leaf(&ref, 'x', 'a', &leaf);
     TEST_ASSERT(n4 != NULL, "4-pre: NODE4 with prefix created");
 
@@ -318,7 +313,6 @@ BOOLEAN test_recursive_delete_internal_prefix_mismatch()
     ART_LEAF* out = recursive_delete_internal((ART_NODE*)n4, &ref, wrongKey, 2, 0, 0);
     TEST_ASSERT(out == NULL, "4.1: returns NULL on prefix mismatch");
 
-    // cleanup
     t_free_tree_best_effort(&ref);
 
     TEST_END("recursive_delete_internal: prefix mismatch");
@@ -342,10 +336,8 @@ BOOLEAN test_recursive_delete_internal_prefix_match_delete()
     UCHAR fullKey[2] = { 'x', 'a' };
     ART_LEAF* out = recursive_delete_internal((ART_NODE*)n4, &ref, fullKey, 2, 0, 0);
     TEST_ASSERT(out == leaf, "5.1: returned removed leaf");
-    // ref may be collapsed by remove_child() paths; only check non-crash poststate
     if (out) free_leaf(&out);
 
-    // Clean remaining structure (if any)
     t_free_tree_best_effort(&ref);
 
     TEST_END("recursive_delete_internal: prefix match -> delete");
@@ -414,7 +406,6 @@ BOOLEAN test_recursive_delete_internal_two_level_delete()
 
     ART_NODE* ref = NULL;
     ART_LEAF* leaf = NULL;
-    // key = { 'p','q','r' }
     ART_NODE4* root = t_make_two_level_internal_then_leaf(&ref, 'p', 'q', 'r', &leaf);
     TEST_ASSERT(root != NULL, "8-pre: two-level tree created");
 
@@ -438,7 +429,6 @@ BOOLEAN test_recursive_delete_internal_recursion_limit()
 
     reset_mock_state();
 
-    // Any non-NULL node & key; the function should early-out before touching structure.
     ART_NODE4* n4 = (ART_NODE4*)art_create_node(NODE4);
     TEST_ASSERT(n4 != NULL, "9-pre: node created");
     ART_NODE* ref = (ART_NODE*)n4;
@@ -448,7 +438,7 @@ BOOLEAN test_recursive_delete_internal_recursion_limit()
     ART_LEAF* out = recursive_delete_internal((ART_NODE*)n4, &ref, key, 1, 0,
         (USHORT)(MAX_RECURSION_DEPTH + 1));
     TEST_ASSERT(out == NULL, "9.1: returns NULL when recursion depth exceeded");
-    // cleanup
+
     t_free_tree_best_effort(&ref);
 
     TEST_END("recursive_delete_internal: recursion depth limit");
@@ -486,13 +476,11 @@ BOOLEAN test_recursive_delete_internal_terminator_delete()
 
     ART_NODE* ref = (ART_NODE*)n4;
 
-    // Delete key "ab" , should hit depth == key_length branch and remove child 0
+    // Delete key "ab"
     ART_LEAF* out = recursive_delete_internal((ART_NODE*)n4, &ref, k_ab, /*key_len*/2, /*depth*/0, /*rec_depth*/0);
     TEST_ASSERT(out == lf, "A.1: returns the terminator leaf");
     if (out) free_leaf(&out);
 
-    // After removal, internal node may collapse depending on implementation of remove_child4().
-    // Just ensure we can free whatever remains safely.
     t_free_tree_best_effort(&ref);
 
     TEST_END("recursive_delete_internal: terminator edge delete");
@@ -539,17 +527,14 @@ BOOLEAN test_recursive_delete_internal_long_prefix_delete()
 
     ART_LEAF* lf = make_leaf(fullkey, key_len, 0x77);
     TEST_ASSERT(lf != NULL, "B-pre: leaf created");
-    // child is a LEAF under the edge
     n4->children[0] = (ART_NODE*)SET_LEAF(lf);
 
     ART_NODE* ref = (ART_NODE*)n4;
 
-    // Try to delete the exact key
     ART_LEAF* out = recursive_delete_internal((ART_NODE*)n4, &ref, fullkey, key_len, /*depth*/0, /*rec_depth*/0);
     TEST_ASSERT(out == lf, "B.1: returned matching leaf with long-prefix compare");
     if (out) free_leaf(&out);
 
-    // Cleanup
     if (ref) t_free_tree_best_effort(&ref);
     ExFreePool2(fullkey, ART_TAG, NULL, 0);
 

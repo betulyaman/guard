@@ -71,7 +71,6 @@ BOOLEAN test_leaf_matches_invalid_params_fam()
         test_free_leaf(lf);
     }
 
-
     // (1.4) key_length > MAX_KEY_LENGTH  // match function's guard
     reset_mock_state();
     {
@@ -92,6 +91,25 @@ BOOLEAN test_leaf_matches_invalid_params_fam()
         UCHAR k[] = { 0x01 };
         BOOLEAN ok = leaf_matches(lf, k, 1);
         TEST_ASSERT(ok == FALSE, "1.5: zero-length leaf must return FALSE");
+        test_free_leaf(lf);
+    }
+
+    // (1.6) leaf->key_length > MAX_KEY_LENGTH  // new: exercise the leaf-side guard
+    reset_mock_state();
+    {
+        SIZE_T too_long = (SIZE_T)MAX_KEY_LENGTH + 1;
+        // Allocate a leaf with a key longer than MAX_KEY_LENGTH; helper stores len into key_length.
+        PUCHAR big = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, too_long, ART_TAG);
+        TEST_ASSERT(big != NULL, "1.6-pre: big key buffer allocation");
+        if (big) { RtlFillMemory(big, too_long, 0xAB); }
+
+        ART_LEAF* lf = test_alloc_leaf_with_key(big, too_long);
+        TEST_ASSERT(lf != NULL, "1.6-pre: leaf allocation with oversized key_length");
+        // Probe with any non-null key/len to pass the other gates.
+        BOOLEAN ok = leaf_matches(lf, big, MAX_KEY_LENGTH);
+        TEST_ASSERT(ok == FALSE, "1.6: leaf->key_length > MAX_KEY_LENGTH must return FALSE");
+
+        if (big) { ExFreePool2(big, ART_TAG, NULL, 0); }
         test_free_leaf(lf);
     }
 
@@ -176,20 +194,26 @@ BOOLEAN test_leaf_matches_exact_matches_fam()
         test_free_leaf(lf);
     }
 
-    // (3.3) boundary at MAX_PREFIX_LENGTH
+    // (3.3) boundary at MAX_KEY_LENGTH
     reset_mock_state();
     {
-        SIZE_T len = (SIZE_T)MAX_PREFIX_LENGTH;
+        SIZE_T len = (SIZE_T)MAX_KEY_LENGTH;
         PUCHAR buf = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, len, ART_TAG);
         TEST_ASSERT(buf != NULL, "3.3-pre: boundary buffer allocation");
-        for (SIZE_T i = 0; i < len; ++i) buf[i] = (UCHAR)(i & 0xFF);
+        if (buf)
+        {
+            for (SIZE_T i = 0; i < len; ++i)
+            {
+                buf[i] = (UCHAR)(i & 0xFF);
+            }
+        }
 
         ART_LEAF* lf = test_alloc_leaf_with_key(buf, len);
         TEST_ASSERT(lf != NULL, "3.3-pre: leaf allocation");
         BOOLEAN ok = leaf_matches(lf, buf, len);
         TEST_ASSERT(ok == TRUE, "3.3: boundary-sized exact match -> TRUE");
 
-        ExFreePool2(buf, ART_TAG, NULL, 0);
+        if (buf) { ExFreePool2(buf, ART_TAG, NULL, 0); }
         test_free_leaf(lf);
     }
 
@@ -197,6 +221,7 @@ BOOLEAN test_leaf_matches_exact_matches_fam()
     TEST_END("leaf_matches (FAM): exact matches");
     return TRUE;
 }
+
 
 /* =====================================================================
    Test 4: Same length, byte mismatches

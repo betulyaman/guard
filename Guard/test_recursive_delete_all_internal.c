@@ -1,6 +1,6 @@
 ﻿#include "test_art.h"
 
-STATIC NTSTATUS recursive_delete_all_internal(_Inout_ ART_TREE* tree, _In_opt_ ART_NODE* node, _Inout_ PULONG leaf_count, _Inout_ PULONG node_count, _In_ USHORT recursion_depth);
+STATIC NTSTATUS recursive_delete_all_internal(_Inout_ ART_TREE* tree, _Inout_ ART_NODE** slot, _Inout_ PULONG leaf_count, _Inout_ PULONG node_count, _In_ USHORT recursion_depth);
 
 // ---------- small local helpers (no CRT) ----------
 static VOID da_zero(void* p, SIZE_T n) { RtlZeroMemory(p, n); }
@@ -145,24 +145,24 @@ BOOLEAN test_delete_all_internal_guards()
     TEST_ASSERT(NT_SUCCESS(st), "1.1c: NULL node ok");
     TEST_ASSERT(leaves == 8 && nodes == 12, "1.1d: counters unchanged");
 
-    // leaf_count == NULL → no-op
+    // leaf_count == NULLno-op
 #pragma warning(push)
 #pragma warning(disable:6387)
-    st = recursive_delete_all_internal((ART_TREE*)1, (ART_NODE*)1, NULL, &nodes, 0);
+    st = recursive_delete_all_internal((ART_TREE*)1, (ART_NODE**)1, NULL, &nodes, 0);
 #pragma warning(pop)
     TEST_ASSERT(NT_SUCCESS(st), "1.1e: NULL leaf_count -> STATUS_SUCCESS");
 
-    // node_count == NULL → no-op
+    // node_count == NULLno-op
 #pragma warning(push)
 #pragma warning(disable:6387)
-    st = recursive_delete_all_internal((ART_TREE*)1, (ART_NODE*)1, &leaves, NULL, 0);
+    st = recursive_delete_all_internal((ART_TREE*)1, (ART_NODE**)1, &leaves, NULL, 0);
 #pragma warning(pop)
     TEST_ASSERT(NT_SUCCESS(st), "1.1f: NULL node_count -> STATUS_SUCCESS");
 
     // 1.2 Recursion depth overflow
 #pragma warning(push)
 #pragma warning(disable:6387)
-    st = recursive_delete_all_internal((ART_TREE*)1, (ART_NODE*)1, &leaves, &nodes,
+    st = recursive_delete_all_internal((ART_TREE*)1, (ART_NODE**)1, &leaves, &nodes,
         (USHORT)(MAX_RECURSION_DEPTH + 1));
 #pragma warning(pop)
     TEST_ASSERT(st == STATUS_STACK_OVERFLOW, "1.2: overflow returns STATUS_STACK_OVERFLOW");
@@ -190,7 +190,7 @@ BOOLEAN test_delete_all_internal_single_leaf()
     ULONG node_cnt = 0; // track total freed nodes (leaves count as nodes too)
 
     // FIX: pass both leaf_count and node_count, plus initial recursion depth = 0
-    NTSTATUS st = recursive_delete_all_internal(&t, n, &del, &node_cnt, 0);
+    NTSTATUS st = recursive_delete_all_internal(&t, &n, &del, &node_cnt, 0);
 
     TEST_ASSERT(NT_SUCCESS(st), "2.1: returns success");
     TEST_ASSERT(del == 1, "2.2: deletes exactly 1 (the leaf)");
@@ -224,7 +224,7 @@ BOOLEAN test_delete_all_internal_node4_simple()
     ULONG node_cnt = 0;    // total freed nodes (leaves count as nodes as well)
 
     // FIX: pass both leaf_count and node_count, plus initial recursion depth = 0
-    NTSTATUS st = recursive_delete_all_internal(&t, (ART_NODE*)n4, &del, &node_cnt, 0);
+    NTSTATUS st = recursive_delete_all_internal(&t, (ART_NODE**)&n4, &del, &node_cnt, 0);
     TEST_ASSERT(NT_SUCCESS(st), "3.1: success");
 
     // Expect 2 leaves and 3 total nodes (2 leaves + the NODE4)
@@ -259,7 +259,7 @@ BOOLEAN test_delete_all_internal_node16_three()
     ULONG node_cnt = 0;  // total freed nodes (includes leaves)
 
     // FIX: pass both leaf_count and node_count, plus initial recursion depth = 0
-    NTSTATUS st = recursive_delete_all_internal(&t, (ART_NODE*)n16, &del, &node_cnt, 0);
+    NTSTATUS st = recursive_delete_all_internal(&t, (ART_NODE**)&n16, &del, &node_cnt, 0);
     TEST_ASSERT(NT_SUCCESS(st), "4.1: success");
 
     TEST_ASSERT(del == 3, "4.2: deletes exactly 3 leaves");
@@ -293,7 +293,7 @@ BOOLEAN test_delete_all_internal_node48_sparse()
     ULONG node_cnt = 0;  // total freed nodes (includes leaves)
 
     // FIX: pass both leaf_count and node_count, plus initial recursion depth = 0
-    NTSTATUS st = recursive_delete_all_internal(&t, (ART_NODE*)n48, &del, &node_cnt, 0);
+    NTSTATUS st = recursive_delete_all_internal(&t, (ART_NODE**)&n48, &del, &node_cnt, 0);
     TEST_ASSERT(NT_SUCCESS(st), "5.1: success");
     TEST_ASSERT(del == 2, "5.2: deletes exactly 2 leaves");
     TEST_ASSERT(node_cnt == 3, "5.3: frees 3 total nodes (2 leaves + NODE48)");
@@ -340,7 +340,7 @@ BOOLEAN test_delete_all_internal_node256_mixed()
     ULONG node_cnt = 0;   // total freed nodes (includes leaves)
 
     // FIX: pass both leaf_count and node_count, plus initial recursion depth = 0
-    NTSTATUS st = recursive_delete_all_internal(&t, (ART_NODE*)n256, &del, &node_cnt, 0);
+    NTSTATUS st = recursive_delete_all_internal(&t, (ART_NODE**)&n256, &del, &node_cnt, 0);
     TEST_ASSERT(NT_SUCCESS(st), "6.1: success");
 
     // Expected deletions: 3 leaves; total nodes freed = 5 (3 leaves + inner NODE4 + top NODE256)
@@ -381,7 +381,7 @@ BOOLEAN test_delete_all_internal_deep()
     ULONG node_cnt = 0;   // total freed nodes (includes leaves)
 
     // FIX: pass both leaf_count and node_count, plus initial recursion depth = 0
-    NTSTATUS st = recursive_delete_all_internal(&t, (ART_NODE*)n4, &del, &node_cnt, 0);
+    NTSTATUS st = recursive_delete_all_internal(&t, (ART_NODE**)&n4, &del, &node_cnt, 0);
     TEST_ASSERT(NT_SUCCESS(st), "7.1: success");
 
     // Expected: 2 leaves; total nodes freed = 4 (2 leaves + NODE16 + NODE4)
@@ -395,7 +395,7 @@ BOOLEAN test_delete_all_internal_deep()
 // ============================
 // Suite runner
 // ============================
-NTSTATUS run_all_recursive_delete_all_tests()
+NTSTATUS run_all_recursive_delete_all_internal_tests()
 {
     LOG_MSG("\n========================================\n");
     LOG_MSG("Starting recursive_delete_all_internal() Test Suite\n");

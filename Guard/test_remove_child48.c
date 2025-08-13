@@ -5,11 +5,15 @@ STATIC NTSTATUS remove_child48(_In_ ART_NODE48* node,
     _Inout_ ART_NODE** ref,
     _In_ UCHAR c);
 
-// We rely on helpers already present in your harness:
-// - art_create_node, copy_header, free_node, make_leaf, free_leaf
-// - IS_LEAF, LEAF_RAW, SET_LEAF
-// - reset_mock_state(), g_free_call_count, g_last_freed_tag
-// - TEST_* macros
+// ---- Fault-injection convenience (same style as other suites) ----
+#ifndef FI_ON_NEXT_ALLOC
+#define FI_ON_NEXT_ALLOC() \
+    configure_mock_failure(STATUS_SUCCESS, STATUS_SUCCESS, TRUE, g_alloc_call_count)
+#endif
+#ifndef FI_OFF
+#define FI_OFF() \
+    configure_mock_failure(STATUS_SUCCESS, STATUS_SUCCESS, FALSE, 0)
+#endif
 
 // ------------ tiny local helpers (no CRT) -------------
 static VOID t_zero(void* p, SIZE_T n) { RtlZeroMemory(p, n); }
@@ -116,7 +120,7 @@ BOOLEAN test_remove_child48_guards()
 }
 
 // ===============================================================
-// Test 2: Not found cases
+// Test 2: Not found cases (and no leaks while simulating corruption)
 // ===============================================================
 BOOLEAN test_remove_child48_not_found_cases()
 {
@@ -138,11 +142,20 @@ BOOLEAN test_remove_child48_not_found_cases()
     TEST_ASSERT(st == STATUS_NOT_FOUND, "2.2: pos > 48 , STATUS_NOT_FOUND");
     n48->child_index[7] = 0;
 
-    // 2.3 mapped but NULL child (simulate)
-    n48->child_index[8] = 1;           // pos = 1 , actual_pos = 0
-    n48->children[0] = NULL;           // inconsistent mapping
+    // 2.3 mapped but NULL child (simulate) — save & restore to avoid leak
+    // Use a fresh mapping that points to slot 0, then NULL that slot temporarily.
+    UCHAR saved_pos1b = n48->child_index[20];          // original child at slot 0 (pos1b=1)
+    TEST_ASSERT(saved_pos1b == 1, "2-pre: key 20 at slot 0");
+    ART_NODE* saved_ch0 = n48->children[0];
+    TEST_ASSERT(saved_ch0 != NULL, "2-pre: slot 0 child exists");
+
+    n48->child_index[8] = 1;       // fake mapping -> slot 0
+    n48->children[0] = NULL;       // inconsistent mapping
     st = remove_child48(n48, &ref, /*c*/ 8);
     TEST_ASSERT(st == STATUS_NOT_FOUND, "2.3: mapped but child NULL , STATUS_NOT_FOUND");
+
+    // restore to prevent leak and leave original mapping intact
+    n48->children[0] = saved_ch0;
     n48->child_index[8] = 0;
 
     // cleanup
@@ -253,7 +266,7 @@ BOOLEAN test_remove_child48_resize_to_node16()
 }
 
 // ===============================================================
-// Test 5: Allocation failure during shrink , full rollback (no hooks)
+// Test 5: Allocation failure during shrink , full rollback
 // ===============================================================
 BOOLEAN test_remove_child48_alloc_failure_rollback()
 {
@@ -275,9 +288,8 @@ BOOLEAN test_remove_child48_alloc_failure_rollback()
     UCHAR  pos1b = n48->child_index[rem];
     ART_NODE* ptr_before = n48->children[pos1b ? (pos1b - 1) : 0];
 
-    // Make the *next* allocation fail (art_create_node inside shrink path)
-    g_simulate_alloc_failure = TRUE;
-    g_alloc_failure_after_count = g_alloc_call_count; // fail on next allocation
+    // Fail the *next* allocation (art_create_node in shrink path)
+    FI_ON_NEXT_ALLOC();
 
     NTSTATUS st = remove_child48(n48, &ref, rem);
     TEST_ASSERT(st == STATUS_INSUFFICIENT_RESOURCES, "5.1: returns INSUFFICIENT_RESOURCES");
@@ -289,7 +301,7 @@ BOOLEAN test_remove_child48_alloc_failure_rollback()
     TEST_ASSERT((ART_NODE48*)ref == n48, "5.5: ref unchanged (no publish)");
 
     // Cleanup
-    g_simulate_alloc_failure = FALSE;
+    FI_OFF();
     t_free_node48_and_leaf_children(&n48);
 
     TEST_END("remove_child48: allocation failure , rollback");
@@ -298,6 +310,7 @@ BOOLEAN test_remove_child48_alloc_failure_rollback()
 
 // ===============================================================
 // Test 6: Corrupt mapping during repack (mapped , NULL child) , rollback
+// (save+restore the corrupted slot to avoid leaks)
 // ===============================================================
 BOOLEAN test_remove_child48_repack_null_child_rollback()
 {
@@ -316,14 +329,16 @@ BOOLEAN test_remove_child48_repack_null_child_rollback()
     TEST_ASSERT(n48->child_index[rem] != 0, "6-pre: removable key exists");
 
     // Corrupt another mapped key so that child_index[x] > 0 but children[pos-1] == NULL
-    // Pick a different key in the same range (not 'rem')
     UCHAR corrupt_key = 110;
     TEST_ASSERT(corrupt_key != rem, "6-pre: pick different key to corrupt");
     UCHAR corrupt_pos1b = n48->child_index[corrupt_key];
     TEST_ASSERT(corrupt_pos1b != 0, "6-pre: corrupt_key is mapped");
+
+    ART_NODE* corrupt_saved = n48->children[corrupt_pos1b - 1]; // save to avoid leak
+    TEST_ASSERT(corrupt_saved != NULL, "6-pre: corrupt slot child exists");
     n48->children[corrupt_pos1b - 1] = NULL; // introduce corruption for repack loop
 
-    // Snapshot for rollback verification
+    // Snapshot for rollback verification of 'rem'
     USHORT before_count = n48->base.num_of_child;
     UCHAR  rem_pos1b = n48->child_index[rem];
     ART_NODE* rem_ptr = n48->children[rem_pos1b - 1];
@@ -331,17 +346,16 @@ BOOLEAN test_remove_child48_repack_null_child_rollback()
     NTSTATUS st = remove_child48(n48, &ref, rem);
     TEST_ASSERT(st == STATUS_DATA_ERROR, "6.1: repack detects corruption , STATUS_DATA_ERROR");
 
-    // Full rollback expected
+    // Full rollback expected for 'rem'
     TEST_ASSERT(n48->base.num_of_child == before_count, "6.2: count restored");
     TEST_ASSERT(n48->child_index[rem] == rem_pos1b, "6.3: index for 'rem' restored");
     TEST_ASSERT(n48->children[rem_pos1b - 1] == rem_ptr, "6.4: child pointer for 'rem' restored");
     TEST_ASSERT((ART_NODE48*)ref == n48, "6.5: ref unchanged");
 
-    // Clean up: we corrupted one slot to NULL, so restore or just free via index map
-    // Easiest is to clear corruption and free normally:
-    // (We can recreate a leaf, but simpler: set mapping to 0 so cleaner won't see NULL mapping)
-    n48->child_index[corrupt_key] = 0;
+    // Restore the intentionally corrupted slot so cleanup can free it
+    n48->children[corrupt_pos1b - 1] = corrupt_saved;
 
+    // cleanup
     t_free_node48_and_leaf_children(&n48);
 
     TEST_END("remove_child48: repack mapped,NULL child , rollback");
@@ -363,8 +377,8 @@ NTSTATUS run_all_remove_child48_tests()
     if (!test_remove_child48_not_found_cases())                all = FALSE; // 2
     if (!test_remove_child48_remove_no_resize())               all = FALSE; // 3
     if (!test_remove_child48_resize_to_node16())               all = FALSE; // 4
-    if (!test_remove_child48_alloc_failure_rollback())      all = FALSE; // 5
-    if (!test_remove_child48_repack_null_child_rollback())   all = FALSE; // 6
+    if (!test_remove_child48_alloc_failure_rollback())         all = FALSE; // 5
+    if (!test_remove_child48_repack_null_child_rollback())     all = FALSE; // 6
 
     LOG_MSG("\n========================================\n");
     if (all) {

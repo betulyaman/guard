@@ -141,10 +141,12 @@
     <ClCompile Include="test_art_insert_no_replace.c" />
     <ClCompile Include="test_art_search.c" />
     <ClCompile Include="test_check_prefix.c" />
+    <ClCompile Include="test_compare_prefix.c" />
     <ClCompile Include="test_copy_header.c" />
     <ClCompile Include="test_ctz.c" />
     <ClCompile Include="test_destroy_utf8_key.c" />
     <ClCompile Include="test_find_child.c" />
+    <ClCompile Include="test_force_delete_all_iterative.c" />
     <ClCompile Include="test_free_leaf.c" />
     <ClCompile Include="test_free_node.c" />
     <ClCompile Include="test_leaf_matches.c" />

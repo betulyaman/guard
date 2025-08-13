@@ -3,10 +3,10 @@
 // Under test
 ULONG art_delete(_Inout_ ART_TREE* tree, _In_ PCUNICODE_STRING unicode_key);
 
-// ------- tiny helpers for this file (no CRT) -------
+// ------- small helpers for this file (no CRT) -------
 static VOID ad_zero(void* p, SIZE_T n) { RtlZeroMemory(p, n); }
 
-// Make a tree with a single leaf as root for given 8-bit key
+// Build a tree whose root is a single encoded leaf for given 8-bit key
 static BOOLEAN ad_make_single_leaf_tree(ART_TREE* tree, CONST UCHAR* key, USHORT key_len, ULONG val)
 {
     ad_zero(tree, sizeof(*tree));
@@ -17,7 +17,7 @@ static BOOLEAN ad_make_single_leaf_tree(ART_TREE* tree, CONST UCHAR* key, USHORT
     return TRUE;
 }
 
-// Build NODE4 root with two 1-byte keys (sorted) , children are leaves
+// Build NODE4 root with two 1-byte keys (kept sorted); children are leaves
 static BOOLEAN ad_make_node4_two_leaves(ART_TREE* tree,
     UCHAR k0, ULONG v0,
     UCHAR k1, ULONG v1)
@@ -35,7 +35,6 @@ static BOOLEAN ad_make_node4_two_leaves(ART_TREE* tree,
         return FALSE;
     }
 
-    // Keep keys sorted
     if (k0 <= k1) {
         n4->keys[0] = k0; n4->children[0] = (ART_NODE*)SET_LEAF(l0);
         n4->keys[1] = k1; n4->children[1] = (ART_NODE*)SET_LEAF(l1);
@@ -51,7 +50,7 @@ static BOOLEAN ad_make_node4_two_leaves(ART_TREE* tree,
     return TRUE;
 }
 
-// NODE4 with prefix {pfx} and single child under byte c -> leaf for key {pfx,c}
+// NODE4 with prefix {pfx} and a single child under byte c -> leaf for key {pfx,c}
 static BOOLEAN ad_make_prefixed_node4_one_leaf(ART_TREE* tree, UCHAR pfx, UCHAR c, ULONG val)
 {
     ad_zero(tree, sizeof(*tree));
@@ -155,7 +154,7 @@ static VOID ad_free_tree(ART_NODE** pref)
     free_node(pref);
 }
 
-// Helper: create + cleanup UNICODE strings
+// UNICODE_STRING helpers
 static NTSTATUS ad_make_unicode(UNICODE_STRING* dst, PCWSTR src, ULONG chars)
 {
     dst->Length = (USHORT)(chars * sizeof(WCHAR));
@@ -176,7 +175,7 @@ static VOID ad_free_unicode(UNICODE_STRING* s)
 }
 
 // ===============================================================
-// Test 1: Guard & trivial paths
+// Test 1: Guards & trivial paths
 // ===============================================================
 BOOLEAN test_art_delete_guards_and_trivial()
 {
@@ -201,17 +200,16 @@ BOOLEAN test_art_delete_guards_and_trivial()
     TEST_ASSERT(v == POLICY_NONE, "1.2: size==0 -> POLICY_NONE");
     ad_free_unicode(&uk);
 
-    // 1.3 Conversion failure path: give empty UNICODE (unicode_to_utf8 returns NULL)
-    // Build non-empty tree so we don't early-return
+    // 1.3 Empty Unicode string -> after conversion either NULL (fail) or key_length==0.
+    // Either way, function must return POLICY_NONE and leave the tree unchanged.
     UCHAR a = 'a';
-    ad_make_single_leaf_tree(&t, &a, 1, 0x11);
+    TEST_ASSERT(ad_make_single_leaf_tree(&t, &a, 1, 0x11), "1-pre2: single-leaf tree");
     UNICODE_STRING emptyu = { 0 };
     st = ad_make_unicode(&emptyu, L"", 0);
-    TEST_ASSERT(NT_SUCCESS(st), "1-pre2: empty unicode");
+    TEST_ASSERT(NT_SUCCESS(st), "1-pre3: empty unicode");
     v = art_delete(&t, &emptyu);
-    TEST_ASSERT(v == POLICY_NONE, "1.3: conversion failure -> POLICY_NONE (no change)");
-    // Tree should remain intact
-    TEST_ASSERT(t.size == 1, "1.3b: size unchanged on conversion failure");
+    TEST_ASSERT(v == POLICY_NONE, "1.3: empty key -> POLICY_NONE (no change)");
+    TEST_ASSERT(t.size == 1, "1.3b: size unchanged");
     ad_free_unicode(&emptyu);
     ad_free_tree(&t.root);
 
@@ -242,14 +240,13 @@ BOOLEAN test_art_delete_single_leaf()
     TEST_ASSERT(t.root == NULL, "2.3: root cleared after delete");
 
     ad_free_unicode(&uk);
-    // nothing to free; root is NULL
 
     TEST_END("art_delete: single-leaf");
     return TRUE;
 }
 
 // ===============================================================
-// Test 3: Key not found (non-matching)
+// Test 3: Key not found
 // ===============================================================
 BOOLEAN test_art_delete_not_found()
 {
@@ -268,7 +265,6 @@ BOOLEAN test_art_delete_not_found()
     TEST_ASSERT(old == POLICY_NONE, "3.1: returns POLICY_NONE for missing key");
     TEST_ASSERT(t.size == 2, "3.2: size unchanged");
 
-    // Cleanup
     ad_free_unicode(&uk);
     ad_free_tree(&t.root);
 
@@ -277,7 +273,7 @@ BOOLEAN test_art_delete_not_found()
 }
 
 // ===============================================================
-// Test 4: Delete one of two children (NODE4) – structure remains valid
+// Test 4: Delete one of two children (NODE4) then the other
 // ===============================================================
 BOOLEAN test_art_delete_one_of_two()
 {
@@ -298,7 +294,7 @@ BOOLEAN test_art_delete_one_of_two()
     TEST_ASSERT(t.root != NULL, "4.3: root still present after one deletion");
     ad_free_unicode(&uka);
 
-    // Now delete 'b' to empty the tree
+    // Delete 'b'
     UNICODE_STRING ukb = { 0 };
     st = ad_make_unicode(&ukb, L"b", 1);
     TEST_ASSERT(NT_SUCCESS(st), "4-pre2: unicode 'b'");
@@ -324,7 +320,6 @@ BOOLEAN test_art_delete_with_prefix_path()
     ART_TREE t;
     TEST_ASSERT(ad_make_prefixed_node4_one_leaf(&t, 'x', 'y', 0x55), "5-pre: tree {x,y}");
 
-    // Delete full key L"xy"
     WCHAR wkey[3] = { L'x', L'y', L'\0' };
     UNICODE_STRING uk = { 0 };
     NTSTATUS st = ad_make_unicode(&uk, wkey, 2);
@@ -371,6 +366,9 @@ BOOLEAN test_art_delete_double_delete()
     return TRUE;
 }
 
+// ===============================================================
+// Test 7 (optional): Reject overlong key (> MAX_KEY_LENGTH)
+// ===============================================================
 BOOLEAN test_art_delete_rejects_overlong_key()
 {
     TEST_START("art_delete: rejects overlong key (optional)");
@@ -385,23 +383,19 @@ BOOLEAN test_art_delete_rejects_overlong_key()
     UCHAR a = 'a';
     TEST_ASSERT(ad_make_single_leaf_tree(&t, &a, 1, 0x42), "pre: single-leaf tree");
 
-    // --- Güvenli overlong uzunluk hesapla ---
-    // UNICODE_STRING.Length = L * sizeof(WCHAR) → USHORT limitine sığmalı.
-    // Ayrıca L > MAX_KEY_LENGTH olmalı ki "overlong" olsun.
-    const size_t maxL_by_unicode = (MAXUSHORT / sizeof(WCHAR)) - 1; // terminatör için 1 char bırak
-    size_t Lsz = (size_t)MAX_KEY_LENGTH + 1;                        // overlong yap
+    // --- Compute a safe UNICODE length L ---
+    // UNICODE_STRING.Length = L * sizeof(WCHAR) must fit USHORT.
+    // Also require L > MAX_KEY_LENGTH so it's truly overlong.
+    const size_t maxL_by_unicode = (MAXUSHORT / sizeof(WCHAR)) - 1; // leave 1 for terminator
+    size_t Lsz = (size_t)MAX_KEY_LENGTH + 1;                        // ensure overlong
     if (Lsz > maxL_by_unicode) {
-        // Eğer MAX_KEY_LENGTH çok büyükse, yine de overlong kalsın:
-        // MAX_KEY_LENGTH == maxL_by_unicode ise Lsz = maxL_by_unicode (eşit) olurdu;
-        // bu durumda +1 yapamayız; testin anlamlı olabilmesi için
-        // MAX_KEY_LENGTH'i düşürmen gerekir. Burada test'i "skip" edelim.
-        LOG_MSG("[INFO] MAX_KEY_LENGTH is too large for UNICODE_STRING; skipping test.\n");
+        LOG_MSG("[INFO] MAX_KEY_LENGTH too large for UNICODE_STRING; skipping test.\n");
         ad_free_tree(&t.root);
         TEST_END("art_delete: rejects overlong key (optional)");
         return TRUE;
     }
 
-    USHORT L = (USHORT)Lsz; // Artık USHORT içine güvenle sığıyor
+    USHORT L = (USHORT)Lsz;
 
     WCHAR* w = (WCHAR*)ExAllocatePool2(POOL_FLAG_NON_PAGED, (SIZE_T)(L + 1) * sizeof(WCHAR), ART_TAG);
     TEST_ASSERT(w != NULL, "pre: alloc long unicode");
@@ -425,7 +419,6 @@ BOOLEAN test_art_delete_rejects_overlong_key()
 #endif
 }
 
-
 // ===============================================================
 // Suite runner
 // ===============================================================
@@ -437,14 +430,13 @@ NTSTATUS run_all_art_delete_tests()
 
     BOOLEAN all = TRUE;
 
-    if (!test_art_delete_guards_and_trivial()) all = FALSE;   // (1) guards, empty tree, conversion failure
-    if (!test_art_delete_single_leaf())        all = FALSE;   // (2) single-leaf success
-    if (!test_art_delete_not_found())          all = FALSE;   // (3) not found
-    if (!test_art_delete_one_of_two())         all = FALSE;   // (4) remove one of two children
-    if (!test_art_delete_with_prefix_path())   all = FALSE;   // (5) internal prefix traversal
-    if (!test_art_delete_double_delete())      all = FALSE;   // (6) idempotence
-    if (!test_art_delete_rejects_overlong_key())      all = FALSE;   // (6) idempotence
-
+    if (!test_art_delete_guards_and_trivial()) all = FALSE;   // 1
+    if (!test_art_delete_single_leaf())        all = FALSE;   // 2
+    if (!test_art_delete_not_found())          all = FALSE;   // 3
+    if (!test_art_delete_one_of_two())         all = FALSE;   // 4
+    if (!test_art_delete_with_prefix_path())   all = FALSE;   // 5
+    if (!test_art_delete_double_delete())      all = FALSE;   // 6
+    if (!test_art_delete_rejects_overlong_key()) all = FALSE; // 7 (optional)
 
     LOG_MSG("\n========================================\n");
     if (all) {

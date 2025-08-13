@@ -374,10 +374,10 @@ BOOLEAN test_add_child48_expand_alloc_failure()
     configure_mock_failure(STATUS_SUCCESS, STATUS_SUCCESS, TRUE, 0); // fail first alloc
 
     ULONG free_before = g_free_call_count;
-#pragma warning(push)
-#pragma warning(disable: 6387)
-    NTSTATUS st = add_child48(n, &ref, 7, t_alloc_dummy_child(NODE16)); // child allocation happens before the failure guard
-#pragma warning(pop)
+    ART_NODE* newChild = t_alloc_dummy_child(NODE16);
+    TEST_ASSERT(newChild != NULL, "9-pre: new child alloc");
+    NTSTATUS st = add_child48(n, &ref, 7, newChild);
+    t_free(newChild);
 
     TEST_ASSERT(st == STATUS_INSUFFICIENT_RESOURCES, "9.1: must return INSUFFICIENT_RESOURCES when NODE256 alloc fails");
     TEST_ASSERT(ref == (ART_NODE*)n, "9.2: ref must remain pointing at old NODE48 on failure");
@@ -393,6 +393,84 @@ BOOLEAN test_add_child48_expand_alloc_failure()
     t_free(n);
 
     TEST_END("add_child48: expand , art_create_node alloc failure");
+    return TRUE;
+}
+
+BOOLEAN test_add_child48_expand_dup_slot_mapping_fails()
+{
+    TEST_START("add_child48: expand, duplicate slot mapping -> DATA_ERROR");
+
+    reset_mock_state();
+    ART_NODE48* n = t_alloc_node48(); TEST_ASSERT(n, "pre");
+    ART_NODE* ch0 = t_alloc_dummy_child(NODE4); TEST_ASSERT(ch0, "pre");
+    n->children[0] = ch0;
+    n->child_index[10] = 1;  // slot 0
+    n->child_index[11] = 1;  // aynı slot -> korupsyon
+    n->base.num_of_child = 48;
+
+    ART_NODE* ref = (ART_NODE*)n;
+    ART_NODE* newChild = t_alloc_dummy_child(NODE16); TEST_ASSERT(newChild, "pre");
+
+    ULONG free_before = g_free_call_count;
+    NTSTATUS st = add_child48(n, &ref, 7, newChild);
+    TEST_ASSERT(st == STATUS_DATA_ERROR, "duplicate slot mapping -> DATA_ERROR");
+    TEST_ASSERT(ref == (ART_NODE*)n, "ref unchanged on failure");
+    TEST_ASSERT(g_free_call_count >= free_before + 1, "temp NODE256 freed");
+
+    // cleanup
+    n->children[0] = NULL;
+    t_free(newChild); t_free(ch0); t_free(n);
+    TEST_END("add_child48: expand, duplicate slot mapping -> DATA_ERROR");
+    return TRUE;
+}
+
+BOOLEAN test_add_child48_expand_unmapped_child_fails()
+{
+    TEST_START("add_child48: expand, child present but unmapped -> DATA_ERROR");
+
+    reset_mock_state();
+    ART_NODE48* n = t_alloc_node48(); TEST_ASSERT(n, "pre");
+    ART_NODE* stray = t_alloc_dummy_child(NODE4); TEST_ASSERT(stray, "pre");
+    n->children[5] = stray; // map yok
+    n->base.num_of_child = 48;
+
+    ART_NODE* ref = (ART_NODE*)n;
+    ART_NODE* newChild = t_alloc_dummy_child(NODE16); TEST_ASSERT(newChild, "pre");
+
+    NTSTATUS st = add_child48(n, &ref, 7, newChild);
+    TEST_ASSERT(st == STATUS_DATA_ERROR, "add_child48: DATA_ERROR");
+
+    // cleanup
+    n->children[5] = NULL;
+    t_free(newChild); t_free(stray); t_free(n);
+    TEST_END("add_child48: expand, child present but unmapped -> DATA_ERROR");
+    return TRUE;
+}
+
+BOOLEAN test_add_child48_expand_add_child256_collision()
+{
+    TEST_START("add_child48: expand, add_child256 collision");
+
+    reset_mock_state();
+    ART_NODE48* n = t_alloc_node48(); TEST_ASSERT(n, "pre");
+    ART_NODE* old = t_alloc_dummy_child(NODE4); TEST_ASSERT(old, "pre");
+    n->children[0] = old;
+    n->child_index[7] = 1;  // key 7 zaten var
+    n->base.num_of_child = 48;
+
+    ART_NODE* ref = (ART_NODE*)n;
+    ART_NODE* newChild = t_alloc_dummy_child(NODE16); TEST_ASSERT(newChild, "pre");
+
+    ULONG free_before = g_free_call_count;
+    NTSTATUS st = add_child48(n, &ref, 7, newChild);
+    TEST_ASSERT(st == STATUS_OBJECT_NAME_COLLISION, "collision bubbles up");
+    TEST_ASSERT(ref == (ART_NODE*)n, "ref unchanged");
+    TEST_ASSERT(g_free_call_count >= free_before + 1, "temp NODE256 freed");
+
+    // cleanup
+    n->children[0] = NULL;
+    t_free(newChild); t_free(old); t_free(n);
+    TEST_END("add_child48: expand, add_child256 collision");
     return TRUE;
 }
 
@@ -418,6 +496,8 @@ NTSTATUS run_all_add_child48_tests()
     if (!test_add_child48_expand_copy_data_error())    all_passed = FALSE; // 7
     if (!test_add_child48_no_allocfree_on_direct())    all_passed = FALSE; // 8
     if (!test_add_child48_expand_alloc_failure())      all_passed = FALSE; // 9
+    if (!test_add_child48_expand_add_child256_collision())  all_passed = FALSE;
+
 
     LOG_MSG("\n========================================\n");
     if (all_passed) {

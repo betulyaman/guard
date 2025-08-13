@@ -171,6 +171,12 @@
     <ClCompile Include="test_recursive_delete_internal.c">
       <Filter>Tests\ART</Filter>
     </ClCompile>
+    <ClCompile Include="test_compare_prefix.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
+    <ClCompile Include="test_force_delete_all_iterative.c">
+      <Filter>Tests\ART</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="minifilter.h">

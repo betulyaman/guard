@@ -12,16 +12,31 @@ STATIC NTSTATUS recursive_insert(_Inout_opt_ ART_NODE* node,
     _Out_ PULONG old_value);
 
 // --- küçük yardımcılar (varsa mevcutlarını kullan) ---
+// --- CRT'siz, kernel-safe uzunluk helper'ı ---
+static USHORT t_cstr_len(_In_reads_or_z_(MAXUSHORT) const char* s)
+{
+    if (!s) return 0;
+    USHORT n = 0;
+    while (n < MAXUSHORT) {
+        if (s[n] == '\0') break;
+        ++n;
+    }
+    return n; // MAXUSHORT’a vurursa satürasyon gibi davranır
+}
+
+// --- strlen kullanmadan anahtar alloc/copy helper'ı ---
 static PUCHAR ri_key(const char* s, USHORT* out_len)
 {
-    USHORT len = (USHORT)strlen(s);
+    USHORT len = t_cstr_len(s);
     PUCHAR k = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, len, ART_TAG);
     if (!k) return NULL;
-    RtlCopyMemory(k, s, len);
+    if (len) RtlCopyMemory(k, s, len);
     if (out_len) *out_len = len;
     return k;
 }
-static VOID ri_free_key(PUCHAR k) { 
+
+static VOID ri_free_key(PUCHAR k)
+{
     if (k) ExFreePool2(k, ART_TAG, NULL, 0);
 }
 
@@ -201,7 +216,7 @@ BOOLEAN test_recursive_insert_split_leaf_diverge_middle()
     {
         ART_TREE t = { 0 };
         ULONG leafs = 0, nodes = 0;
-        (void)recursive_delete_all_internal(&t, root, &leafs, &nodes, 0);
+        (void)recursive_delete_all_internal(&t, &root, &leafs, &nodes, 0);
         root = NULL;
     }
 
@@ -248,7 +263,7 @@ BOOLEAN test_recursive_insert_split_leaf_prefix_case()
     {
         ART_TREE t = (ART_TREE){ 0 };
         ULONG leafs = 0, nodes = 0;
-        (void)recursive_delete_all_internal(&t, root, &leafs, &nodes, 0);
+        (void)recursive_delete_all_internal(&t, &root, &leafs, &nodes, 0);
         root = NULL;
     }
     ri_free_key(k1); ri_free_key(k2);
@@ -294,7 +309,7 @@ BOOLEAN test_recursive_insert_internal_full_prefix_then_descend()
     {
         ART_TREE t = (ART_TREE){ 0 };
         ULONG leafs = 0, nodes = 0;
-        (void)recursive_delete_all_internal(&t, ref, &leafs, &nodes, 0);
+        (void)recursive_delete_all_internal(&t, &ref, &leafs, &nodes, 0);
         ref = NULL;
     }
 
@@ -342,7 +357,7 @@ BOOLEAN test_recursive_insert_internal_prefix_mismatch_split()
     {
         ART_TREE t = (ART_TREE){ 0 };
         ULONG leafs = 0, nodes = 0;
-        (void)recursive_delete_all_internal(&t, ref, &leafs, &nodes, 0);
+        (void)recursive_delete_all_internal(&t, &ref, &leafs, &nodes, 0);
         ref = NULL;
     }
 
@@ -385,7 +400,7 @@ BOOLEAN test_recursive_insert_terminator_no_prefix_path()
     {
         ART_TREE t = (ART_TREE){ 0 };
         ULONG leafs = 0, nodes = 0;
-        (void)recursive_delete_all_internal(&t, ref, &leafs, &nodes, 0);
+        (void)recursive_delete_all_internal(&t, &ref, &leafs, &nodes, 0);
         ref = NULL;
     }
 
@@ -427,7 +442,7 @@ BOOLEAN test_recursive_insert_updates_ref_on_split()
     {
         ART_TREE t = (ART_TREE){ 0 };
         ULONG leafs = 0, nodes = 0;
-        (void)recursive_delete_all_internal(&t, root, &leafs, &nodes, 0);
+        (void)recursive_delete_all_internal(&t, &root, &leafs, &nodes, 0);
         root = NULL;
     }
     ri_free_key(k1); ri_free_key(k2);
@@ -436,9 +451,96 @@ BOOLEAN test_recursive_insert_updates_ref_on_split()
     return TRUE;
 }
 
-// =====================================================
-// Suite runner
-// =====================================================
+// ------------------------------------------------------------------
+// ADD: Test 11 — invalid internal type is rejected
+// ------------------------------------------------------------------
+BOOLEAN test_recursive_insert_invalid_internal_type()
+{
+    TEST_START("recursive_insert: invalid internal type");
+
+    reset_mock_state();
+
+    ART_NODE* bad = t_alloc_header_only((NODE_TYPE)0x77);
+    TEST_ASSERT(bad != NULL, "11-pre: alloc bad header");
+
+    USHORT kl; PUCHAR k = ri_key("a", &kl);
+    BOOLEAN old = FALSE; ULONG oldv = 0;
+    ART_NODE* ref = bad;
+
+    NTSTATUS st = recursive_insert(bad, &ref, k, kl, 0x01, 0, &old, FALSE, &oldv);
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "11.1: invalid type must be rejected");
+    TEST_ASSERT(ref == bad, "11.2: ref unchanged");
+
+    t_free(bad);
+    ri_free_key(k);
+
+    TEST_END("recursive_insert: invalid internal type");
+    return TRUE;
+}
+
+// ------------------------------------------------------------------
+// ADD: Test 12 — corrupt child count is rejected (e.g., NODE4 with 5)
+// ------------------------------------------------------------------
+BOOLEAN test_recursive_insert_corrupt_child_count()
+{
+    TEST_START("recursive_insert: corrupt child count");
+
+    reset_mock_state();
+
+    ART_NODE4* n4 = t_alloc_node4();
+    TEST_ASSERT(n4 != NULL, "12-pre: node4 alloc");
+    n4->base.type = NODE4;
+    n4->base.num_of_child = 5; // corrupt (>4)
+
+    USHORT kl; PUCHAR k = ri_key("x", &kl);
+    BOOLEAN old = FALSE; ULONG oldv = 0;
+    ART_NODE* ref = (ART_NODE*)n4;
+
+    NTSTATUS st = recursive_insert((ART_NODE*)n4, &ref, k, kl, 0x02, 0, &old, FALSE, &oldv);
+    TEST_ASSERT(st == STATUS_DATA_ERROR, "12.1: child count corruption must be rejected");
+    TEST_ASSERT(ref == (ART_NODE*)n4, "12.2: ref unchanged on reject");
+
+    t_free(n4);
+    ri_free_key(k);
+
+    TEST_END("recursive_insert: corrupt child count");
+    return TRUE;
+}
+
+// ------------------------------------------------------------------
+// ADD: Test 13 — key_length > MAX_KEY_LENGTH => INVALID_PARAMETER
+// (yalnızca derleme zamanı koşulu uygunsa çalışır)
+// ------------------------------------------------------------------
+BOOLEAN test_recursive_insert_key_too_long()
+{
+    TEST_START("recursive_insert: key too long");
+
+#if (MAX_KEY_LENGTH < MAXUSHORT)
+    reset_mock_state();
+
+    USHORT too_long = (USHORT)(MAX_KEY_LENGTH + 1u);
+    PUCHAR k = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, too_long, ART_TAG);
+    TEST_ASSERT(k != NULL, "13-pre: key alloc");
+    // doldur
+    for (USHORT i = 0; i < too_long; ++i) k[i] = (UCHAR)i;
+
+    ART_NODE* root = NULL;
+    BOOLEAN old = FALSE; ULONG oldv = 0;
+
+    NTSTATUS st = recursive_insert(NULL, &root, k, too_long, 0xCAFE, 0, &old, FALSE, &oldv);
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "13.1: key too long must be rejected");
+    TEST_ASSERT(root == NULL, "13.2: root must remain NULL");
+
+    ExFreePool2(k, ART_TAG, NULL, 0);
+#else
+    LOG_MSG("[SKIP] 13: MAX_KEY_LENGTH == MAXUSHORT; cannot form too-long key in USHORT param\n");
+#endif
+
+    TEST_END("recursive_insert: key too long");
+    return TRUE;
+}
+
+// =================== Suite runner (append new tests) ===================
 NTSTATUS run_all_recursive_insert_tests()
 {
     LOG_MSG("\n========================================\n");
@@ -447,16 +549,19 @@ NTSTATUS run_all_recursive_insert_tests()
 
     BOOLEAN ok = TRUE;
 
-    if (!test_recursive_insert_guards())                      ok = FALSE; // 1
-    if (!test_recursive_insert_into_null_slot())              ok = FALSE; // 2
-    if (!test_recursive_insert_duplicate_no_replace())        ok = FALSE; // 3
-    if (!test_recursive_insert_duplicate_with_replace())      ok = FALSE; // 4
-    if (!test_recursive_insert_split_leaf_diverge_middle())   ok = FALSE; // 5
-    if (!test_recursive_insert_split_leaf_prefix_case())      ok = FALSE; // 6
-    if (!test_recursive_insert_internal_full_prefix_then_descend()) ok = FALSE; // 7
-    if (!test_recursive_insert_internal_prefix_mismatch_split())    ok = FALSE; // 8
-    if (!test_recursive_insert_terminator_no_prefix_path())   ok = FALSE; // 9
-    if (!test_recursive_insert_updates_ref_on_split())        ok = FALSE; // 10
+    if (!test_recursive_insert_guards())                              ok = FALSE; // 1
+    if (!test_recursive_insert_into_null_slot())                      ok = FALSE; // 2
+    if (!test_recursive_insert_duplicate_no_replace())                ok = FALSE; // 3
+    if (!test_recursive_insert_duplicate_with_replace())              ok = FALSE; // 4
+    if (!test_recursive_insert_split_leaf_diverge_middle())           ok = FALSE; // 5
+    if (!test_recursive_insert_split_leaf_prefix_case())              ok = FALSE; // 6
+    if (!test_recursive_insert_internal_full_prefix_then_descend())   ok = FALSE; // 7
+    if (!test_recursive_insert_internal_prefix_mismatch_split())      ok = FALSE; // 8
+    if (!test_recursive_insert_terminator_no_prefix_path())           ok = FALSE; // 9
+    if (!test_recursive_insert_updates_ref_on_split())                ok = FALSE; // 10
+    if (!test_recursive_insert_invalid_internal_type())               ok = FALSE; // 11 (NEW)
+    if (!test_recursive_insert_corrupt_child_count())                 ok = FALSE; // 12 (NEW)
+    if (!test_recursive_insert_key_too_long())                        ok = FALSE; // 13 (NEW)
 
     LOG_MSG("\n========================================\n");
     if (ok) LOG_MSG("ALL recursive_insert() TESTS PASSED!\n");

@@ -357,6 +357,125 @@ BOOLEAN test_maximum_no_allocfree_sideeffects()
     return TRUE;
 }
 
+// --- EXTRA: NODE48 corrupt index out-of-range -> NULL ---
+BOOLEAN test_maximum_node48_corrupt_index_out_of_range()
+{
+    TEST_START("maximum: NODE48 corrupt index (>48) -> NULL");
+    reset_mock_state();
+
+    ART_NODE48* n48 = t_alloc_node48(); TEST_ASSERT(n48, "pre: node48 alloc");
+    n48->base.type = NODE48; n48->base.num_of_child = 1;
+
+    // Geçersiz: 49 (1..48 olmalı)
+    n48->child_index[250] = 49;
+
+    ART_LEAF* got = maximum(&n48->base);
+    TEST_ASSERT(got == NULL, "corrupt map >48 must yield NULL");
+
+    test_free_node_all(n48);
+    TEST_END("maximum: NODE48 corrupt index (>48) -> NULL");
+    return TRUE;
+}
+
+// --- EXTRA: NODE4 clamp num_of_child > 4 ---
+BOOLEAN test_maximum_node4_clamp_over_capacity()
+{
+    TEST_START("maximum: NODE4 clamp num_of_child>4");
+    reset_mock_state();
+
+    ART_NODE4* n4 = t_alloc_node4(); TEST_ASSERT(n4, "pre: node4 alloc");
+    n4->base.type = NODE4;
+    n4->base.num_of_child = 9; // kapasite üstü; limit 4 olacak
+
+    // Yüksek tarafta tek yaprak: index 3
+    ART_LEAF* lf = test_alloc_leaf(3, 0x23); TEST_ASSERT(lf, "leaf alloc");
+    n4->children[3] = SET_LEAF(lf);
+
+    ART_LEAF* got = maximum(&n4->base);
+    TEST_ASSERT(got == lf, "must clamp to 4 and pick index 3");
+
+    test_free_leaf(lf);
+    test_free_node_all(n4);
+    TEST_END("maximum: NODE4 clamp num_of_child>4");
+    return TRUE;
+}
+
+// --- EXTRA: NODE16 clamp num_of_child > 16 ---
+BOOLEAN test_maximum_node16_clamp_over_capacity()
+{
+    TEST_START("maximum: NODE16 clamp num_of_child>16");
+    reset_mock_state();
+
+    ART_NODE16* n16 = t_alloc_node16(); TEST_ASSERT(n16, "pre: node16 alloc");
+    n16->base.type = NODE16;
+    n16->base.num_of_child = 25; // kapasite üstü; limit 16
+
+    ART_LEAF* lf = test_alloc_leaf(4, 0x24); TEST_ASSERT(lf, "leaf alloc");
+    n16->children[15] = SET_LEAF(lf);
+
+    ART_LEAF* got = maximum(&n16->base);
+    TEST_ASSERT(got == lf, "must clamp to 16 and pick index 15");
+
+    test_free_leaf(lf);
+    test_free_node_all(n16);
+    TEST_END("maximum: NODE16 clamp num_of_child>16");
+    return TRUE;
+}
+
+// --- EXTRA: All descents return NULL -> overall NULL ---
+BOOLEAN test_maximum_all_paths_null()
+{
+    TEST_START("maximum: all descents -> NULL");
+    reset_mock_state();
+
+    // NODE4 -> NODE16 -> NODE48 -> NODE256; hiç yaprak yok
+    ART_NODE256* n256 = t_alloc_node256(); TEST_ASSERT(n256, "pre: n256");
+    n256->base.type = NODE256; n256->base.num_of_child = 1;
+    // bütün children[] NULL
+
+    ART_NODE48* n48 = t_alloc_node48(); TEST_ASSERT(n48, "pre: n48");
+    n48->base.type = NODE48; n48->base.num_of_child = 1;
+    n48->child_index[255] = 1;
+    n48->children[0] = (ART_NODE*)n256;
+
+    ART_NODE16* n16 = t_alloc_node16(); TEST_ASSERT(n16, "pre: n16");
+    n16->base.type = NODE16; n16->base.num_of_child = 1;
+    n16->children[15] = (ART_NODE*)n48;
+
+    ART_NODE4* n4 = t_alloc_node4(); TEST_ASSERT(n4, "pre: n4");
+    n4->base.type = NODE4; n4->base.num_of_child = 4;
+    n4->children[3] = (ART_NODE*)n16;
+
+    ART_LEAF* got = maximum(&n4->base);
+    TEST_ASSERT(got == NULL, "no reachable leaf -> NULL");
+
+    test_free_node_all(n4);
+    TEST_END("maximum: all descents -> NULL");
+    return TRUE;
+}
+
+// --- EXTRA: NODE256 highest non-NULL after many NULLs ---
+BOOLEAN test_maximum_node256_highest_nonnull_after_nulls()
+{
+    TEST_START("maximum: NODE256 pick highest non-NULL after NULLs");
+    reset_mock_state();
+
+    ART_NODE256* n256 = t_alloc_node256(); TEST_ASSERT(n256, "pre: n256");
+    n256->base.type = NODE256; n256->base.num_of_child = 2;
+
+    // 255 NULL, 240 leaf
+    ART_LEAF* lf = test_alloc_leaf(5, 0x25); TEST_ASSERT(lf, "leaf alloc");
+    n256->children[240] = SET_LEAF(lf);
+
+    ART_LEAF* got = maximum(&n256->base);
+    TEST_ASSERT(got == lf, "must choose highest non-NULL slot (240)");
+
+    test_free_leaf(lf);
+    test_free_node_all(n256);
+    TEST_END("maximum: NODE256 pick highest non-NULL after NULLs");
+    return TRUE;
+}
+
 /* =========================================================
    Suite Runner
    ========================================================= */
@@ -377,6 +496,11 @@ NTSTATUS run_all_maximum_tests()
     if (!test_maximum_node256_traversal())          all_passed = FALSE;  // 7
     if (!test_maximum_multilevel_recursion())       all_passed = FALSE;  // 8
     if (!test_maximum_no_allocfree_sideeffects())   all_passed = FALSE;  // 9
+    if (!test_maximum_node48_corrupt_index_out_of_range()) all_passed = FALSE;
+    if (!test_maximum_node4_clamp_over_capacity())         all_passed = FALSE;
+    if (!test_maximum_node16_clamp_over_capacity())        all_passed = FALSE;
+    if (!test_maximum_all_paths_null())                    all_passed = FALSE;
+    if (!test_maximum_node256_highest_nonnull_after_nulls()) all_passed = FALSE;
 
     LOG_MSG("\n========================================\n");
     if (all_passed) {

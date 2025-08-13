@@ -5,11 +5,15 @@ STATIC NTSTATUS remove_child16(_In_ ART_NODE16* node,
     _Inout_ ART_NODE** ref,
     _In_ ART_NODE** leaf);
 
-// We assume the helpers/types/macros from your harness are available:
-// - art_create_node, copy_header, free_node, make_leaf, free_leaf
-// - IS_LEAF, LEAF_RAW, SET_LEAF
-// - reset_mock_state(), g_free_call_count, g_last_freed_tag
-// - TEST_* macros
+// ---- Fault-injection convenience (same style as other suites) ----
+#ifndef FI_ON_NEXT_ALLOC
+#define FI_ON_NEXT_ALLOC() \
+    configure_mock_failure(STATUS_SUCCESS, STATUS_SUCCESS, TRUE, g_alloc_call_count)
+#endif
+#ifndef FI_OFF
+#define FI_OFF() \
+    configure_mock_failure(STATUS_SUCCESS, STATUS_SUCCESS, FALSE, 0)
+#endif
 
 // ---------------- tiny local helpers (no CRT) ----------------
 static VOID t_zero(void* p, SIZE_T n) { RtlZeroMemory(p, n); }
@@ -130,6 +134,33 @@ BOOLEAN test_remove_child16_guards()
 }
 
 // ===============================================================
+// Test 1b: Wrong node type
+// ===============================================================
+BOOLEAN test_remove_child16_wrong_type()
+{
+    TEST_START("remove_child16: wrong type");
+
+    reset_mock_state();
+
+    ART_NODE16* n16 = (ART_NODE16*)art_create_node(NODE16);
+    TEST_ASSERT(n16 != NULL, "1b-pre: created NODE16");
+    n16->base.type = NODE48; // corrupt type
+
+    ART_NODE* ref = (ART_NODE*)n16;
+#pragma warning(push)
+#pragma warning(disable: 6387)
+    NTSTATUS st = remove_child16(n16, &ref, &n16->children[0]);
+#pragma warning(pop)
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "1b.1: non-NODE16 rejected");
+    TEST_ASSERT(ref == (ART_NODE*)n16, "1b.2: ref unchanged on reject");
+
+    free_node((ART_NODE**)&n16);
+
+    TEST_END("remove_child16: wrong type");
+    return TRUE;
+}
+
+// ===============================================================
 // Test 2: Invalid position
 //   - leaf pointer outside children array , STATUS_INVALID_PARAMETER
 //   - leaf pointer inside array but >= num_of_child , STATUS_INVALID_PARAMETER
@@ -159,7 +190,6 @@ BOOLEAN test_remove_child16_invalid_position()
     TEST_END("remove_child16: invalid position");
     return TRUE;
 }
-
 
 // ===============================================================
 // Test 3: Child at position is NULL , STATUS_NOT_FOUND
@@ -209,21 +239,19 @@ BOOLEAN test_remove_child16_remove_middle_no_resize()
     TEST_ASSERT(((ART_NODE16*)ref) == n16, "4.2: no resize, ref unchanged");
     TEST_ASSERT(n16->base.num_of_child == before_count - 1, "4.3: count decremented to 5");
 
-    // Verify shift of keys
-    // Pre: keys = 40,41,42,43,44,45
-    // After removing idx=2 (key 42) , keys expected: 40,41,43,44,45
+    // Verify shift of keys: 40,41,43,44,45
     TEST_ASSERT(n16->keys[0] == 40, "4.4: key[0] ok");
     TEST_ASSERT(n16->keys[1] == 41, "4.5: key[1] ok");
     TEST_ASSERT(n16->keys[2] == 43, "4.6: key[2] shifted");
     TEST_ASSERT(n16->keys[3] == 44, "4.7: key[3] shifted");
     TEST_ASSERT(n16->keys[4] == 45, "4.8: key[4] shifted");
 
-    // Verify child shift (positions 2.. end moved left)
+    // Verify child shift
     TEST_ASSERT(n16->children[2] != NULL, "4.9: child[2] now previous child[3]");
     TEST_ASSERT(n16->children[3] != NULL, "4.10: child[3] now previous child[4]");
     TEST_ASSERT(n16->children[4] != NULL, "4.11: child[4] now previous child[5]");
 
-    // Cleanup: free removed leaf and remaining node/children
+    // Cleanup
     ART_LEAF* removed_leaf = NULL;
     if (removed_child && IS_LEAF(removed_child)) {
         removed_leaf = LEAF_RAW(removed_child);
@@ -351,16 +379,52 @@ BOOLEAN test_remove_child16_resize_to_node4()
 }
 
 // ===============================================================
-// Test 8: FI-only branches (documented)
-//  - art_create_node(NODE4) failure , STATUS_INSUFFICIENT_RESOURCES
-//  - copy_header failure , return error and free new_node
-// These need fault injection or indirection via function pointers.
+// Test 8: Allocation failure during shrink (FI)full rollback
+// ===============================================================
+BOOLEAN test_remove_child16_alloc_failure_on_shrink()
+{
+    TEST_START("remove_child16: alloc failure on shrinkrollback");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_NODE16* n16 = t_make_node16_with_children_count(/*count*/ 4, /*first_key*/ 10, &ref, NULL, 0);
+    TEST_ASSERT(n16 != NULL, "8-pre: created NODE16(4)");
+
+    // snap state
+    UCHAR  pos = 1;
+    ART_NODE* saved_child = n16->children[pos];
+    UCHAR  saved_key[4]; for (int i = 0; i < 4; ++i) saved_key[i] = n16->keys[i];
+    USHORT saved_count = n16->base.num_of_child;
+
+    // make next allocation fail (NODE4 allocation)
+    FI_ON_NEXT_ALLOC();
+
+    NTSTATUS st = remove_child16(n16, &ref, &n16->children[pos]);
+    TEST_ASSERT(st == STATUS_INSUFFICIENT_RESOURCES, "8.1: art_create_node(NODE4) failsINSUFFICIENT_RESOURCES");
+
+    // verify rollback: node intact, ref unchanged
+    TEST_ASSERT((ART_NODE16*)ref == n16, "8.2: ref unchanged");
+    TEST_ASSERT(n16->base.num_of_child == saved_count, "8.3: count unchanged");
+    TEST_ASSERT(n16->children[pos] == saved_child, "8.4: removed slot restored");
+    for (int i = 0; i < 4; ++i) TEST_ASSERT(n16->keys[i] == saved_key[i], "8.5: keys unchanged");
+
+    // cleanup
+    FI_OFF();
+    t_free_node16_and_leaf_children(&n16);
+
+    TEST_END("remove_child16: alloc failure on shrinkrollback");
+    return TRUE;
+}
+
+// ===============================================================
+// Test 9: FI-only branches (documented) — copy_header failure
+// (requires dedicated hook; kept as documentation like other suites)
 // ===============================================================
 BOOLEAN test_remove_child16_fi_only_branches_documented()
 {
     TEST_START("remove_child16: FI-only branches (documented)");
-    LOG_MSG("[INFO] art_create_node(NODE4) failure requires fault injection to simulate.\n");
-    LOG_MSG("[INFO] copy_header failure requires fault injection to simulate.\n");
+    LOG_MSG("[INFO] copy_header failure requires FI to simulate.\n");
     TEST_END("remove_child16: FI-only branches (documented)");
     return TRUE;
 }
@@ -377,13 +441,15 @@ NTSTATUS run_all_remove_child16_tests()
     BOOLEAN all = TRUE;
 
     if (!test_remove_child16_guards())                          all = FALSE; // 1
+    if (!test_remove_child16_wrong_type())                      all = FALSE; // 1b
     if (!test_remove_child16_invalid_position())                all = FALSE; // 2
     if (!test_remove_child16_child_null())                      all = FALSE; // 3
     if (!test_remove_child16_remove_middle_no_resize())         all = FALSE; // 4
     if (!test_remove_child16_remove_first_no_resize())          all = FALSE; // 5
     if (!test_remove_child16_remove_last_no_resize())           all = FALSE; // 6
     if (!test_remove_child16_resize_to_node4())                 all = FALSE; // 7
-    if (!test_remove_child16_fi_only_branches_documented())     all = FALSE; // 8 (doc)
+    if (!test_remove_child16_alloc_failure_on_shrink())         all = FALSE; // 8
+    if (!test_remove_child16_fi_only_branches_documented())     all = FALSE; // 9 (doc)
 
     LOG_MSG("\n========================================\n");
     if (all) {

@@ -283,6 +283,74 @@ BOOLEAN test_art_create_node_size_guard_nonzero_for_valid()
 }
 
 /* =========================================================
+   Test 7: Per-type internal buffers are zeroed
+   Purpose:
+     - Ensure type-specific arrays are zero-initialized:
+       * NODE4/NODE16: keys[] and children[] are zero/NULL
+       * NODE48: child_index[] == 0 and children[] == NULL
+       * NODE256: children[256] == NULL
+   ========================================================= */
+BOOLEAN test_art_create_node_per_type_zero_internal_buffers()
+{
+    TEST_START("art_create_node: Per-type internal buffers zero-initialized");
+
+    reset_mock_state();
+
+    // NODE4
+    {
+        ART_NODE4* n4 = (ART_NODE4*)art_create_node(NODE4);
+        TEST_ASSERT(n4 != NULL, "7.1: NODE4 allocated");
+        for (int i = 0; i < 4; ++i)
+        {
+            TEST_ASSERT(n4->keys[i] == 0, "7.1: NODE4 keys[] must be zero");
+            TEST_ASSERT(n4->children[i] == NULL, "7.1: NODE4 children[] must be NULL");
+        }
+        test_free_node_if_any((ART_NODE*)n4);
+    }
+
+    // NODE16
+    {
+        ART_NODE16* n16 = (ART_NODE16*)art_create_node(NODE16);
+        TEST_ASSERT(n16 != NULL, "7.2: NODE16 allocated");
+        for (int i = 0; i < 16; ++i)
+        {
+            TEST_ASSERT(n16->keys[i] == 0, "7.2: NODE16 keys[] must be zero");
+            TEST_ASSERT(n16->children[i] == NULL, "7.2: NODE16 children[] must be NULL");
+        }
+        test_free_node_if_any((ART_NODE*)n16);
+    }
+
+    // NODE48
+    {
+        ART_NODE48* n48 = (ART_NODE48*)art_create_node(NODE48);
+        TEST_ASSERT(n48 != NULL, "7.3: NODE48 allocated");
+        for (int i = 0; i < 256; ++i)
+        {
+            TEST_ASSERT(n48->child_index[i] == 0, "7.3: NODE48 child_index[] must be zero");
+        }
+        for (int i = 0; i < 48; ++i)
+        {
+            TEST_ASSERT(n48->children[i] == NULL, "7.3: NODE48 children[] must be NULL");
+        }
+        test_free_node_if_any((ART_NODE*)n48);
+    }
+
+    // NODE256
+    {
+        ART_NODE256* n256 = (ART_NODE256*)art_create_node(NODE256);
+        TEST_ASSERT(n256 != NULL, "7.4: NODE256 allocated");
+        for (int i = 0; i < 256; ++i)
+        {
+            TEST_ASSERT(n256->children[i] == NULL, "7.4: NODE256 children[] must be NULL");
+        }
+        test_free_node_if_any((ART_NODE*)n256);
+    }
+
+    TEST_END("art_create_node: Per-type internal buffers zero-initialized");
+    return TRUE;
+}
+
+/* =========================================================
    Suite Runner
    ========================================================= */
 NTSTATUS run_all_art_create_node_tests()
@@ -299,6 +367,8 @@ NTSTATUS run_all_art_create_node_tests()
     if (!test_art_create_node_stress_many())                  all_passed = FALSE;
     if (!test_art_create_node_zero_init_observables())        all_passed = FALSE;
     if (!test_art_create_node_size_guard_nonzero_for_valid()) all_passed = FALSE;
+    if (!test_art_create_node_per_type_zero_internal_buffers()) all_passed = FALSE;
+
 
     LOG_MSG("\n========================================\n");
     if (all_passed) {

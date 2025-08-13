@@ -11,9 +11,12 @@
             LOG_MSG("[TEST FAILED] %s: %s\n", __FUNCTION__, message); \
             return FALSE; \
         }\
+       /* else {\
+            LOG_MSG("[TEST PASSED] %s: %s\n", __FUNCTION__, message); \
+        }\*/\
     } while(0)
 
-#define TEST_START(test_name) //\
+#define TEST_START(test_name) \
     LOG_MSG("\n=== Starting Test: %s ===\n", test_name)
 
 #define TEST_END(test_name) //\
@@ -39,12 +42,19 @@ extern NTSTATUS g_mock_unicode_to_utf8_return;
 extern BOOLEAN  g_simulate_alloc_failure;
 extern ULONG    g_alloc_failure_after_count;
 
+// create header
+extern volatile LONG g_copy_header_fail_once_flag;
+extern NTSTATUS g_copy_header_fail_status;
+
 // free_node()
 extern UCHAR   g_last_freed_node_type_before_free;
 
 // free_leaf()
 extern ULONG   g_debugbreak_count;
 extern USHORT  g_last_freed_leaf_keylen_before_free;
+
+// add_child48();
+extern NTSTATUS g_mock_add_child48_once;
 
 //-------------------------------------------------------
 // Mock API prototypes (implementasyon test_art.c içinde)
@@ -75,6 +85,18 @@ void configure_mock_failure(NTSTATUS downcase_status,
     BOOLEAN alloc_fail,
     ULONG alloc_fail_after);
 
+// --- UTF-8 fine-grained mock controls (for probe/convert separation) ---
+VOID configure_mock_utf8_paths(
+    _In_ NTSTATUS probe_status,
+    _In_ NTSTATUS convert_status,
+    _In_ ULONG force_written_length_on_convert // 0 => do not override written length
+);
+
+VOID configure_mock_utf8_probe_zero_required_length(VOID);
+
+VOID mock_copy_header_fail_once(_In_ NTSTATUS status);
+VOID mock_add_child48_fail_once(_In_ NTSTATUS status);
+
 //-------------------------------------------------------
 // CRT Helpers
 //-------------------------------------------------------
@@ -101,9 +123,7 @@ VOID Test_DebugBreak(VOID);
 // Unicode helpers
 //-------------------------------------------------------
 void    cleanup_unicode_string(UNICODE_STRING* str);
-NTSTATUS create_unicode_string(UNICODE_STRING* dest,
-    const WCHAR* source,
-    ULONG length_chars);
+NTSTATUS create_unicode_string(UNICODE_STRING* dest, const WCHAR* source, ULONG length_chars);
 
 // ===== helpers (no CRT) =====
 ART_NODE* t_alloc_header_only(NODE_TYPE t);

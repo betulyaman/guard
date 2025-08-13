@@ -226,20 +226,86 @@ BOOLEAN test_make_leaf_exceed_max_length()
     UCHAR some = 0x11;
     ULONG a0 = g_alloc_call_count, f0 = g_free_call_count;
 
-    // Produce an “exceed” length without truncation warnings:
-    // If +1 fits in USHORT, use it; otherwise use MAXUSHORT as a sentinel.
-    USHORT too_long = MAXUSHORT;
-
+#if (MAX_KEY_LENGTH < MAXUSHORT)
+    USHORT too_long = (USHORT)(MAX_KEY_LENGTH + 1u);
     ART_LEAF* lf = make_leaf(&some, too_long, 0xAAAAAAAA);
-
     TEST_ASSERT(lf == NULL, "6.1: exceeding max must fail");
     TEST_ASSERT(g_alloc_call_count == a0 && g_free_call_count == f0,
         "6.1: no alloc/free on guard fail");
+#else
+    LOG_MSG("[SKIP] 6.1: MAX_KEY_LENGTH == MAXUSHORT; USHORT ile daha büyük değer oluşturulamıyor\n");
+#endif
 
     TEST_END("make_leaf: exceeding MAX_KEY_LENGTH");
     return TRUE;
 }
 
+BOOLEAN test_make_leaf_uses_correct_tag_and_size()
+{
+    TEST_START("make_leaf: uses ART_TAG and correct size");
+
+    reset_mock_state();
+
+    const USHORT len = 13;
+    const SIZE_T base = FIELD_OFFSET(ART_LEAF, key);
+    PUCHAR key = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, len, ART_TAG);
+    TEST_ASSERT(key != NULL, "pre: input key alloc");
+    for (USHORT i = 0; i < len; ++i) key[i] = (UCHAR)(0x37 + i);
+
+    ULONG a0 = g_alloc_call_count;
+    ART_LEAF* lf = make_leaf(key, len, 0xDEADBEEF);
+    TEST_ASSERT(lf != NULL, "must succeed");
+    TEST_ASSERT(g_alloc_call_count == a0 + 1, "one allocation");
+    TEST_ASSERT(g_last_allocated_tag == ART_TAG, "must allocate with ART_TAG");
+    TEST_ASSERT(g_last_allocated_size == base + len, "allocated size must be base+len");
+
+    if (lf) ExFreePool2(lf, ART_TAG, NULL, 0);
+    ExFreePool2(key, ART_TAG, NULL, 0);
+
+    TEST_END("make_leaf: uses ART_TAG and correct size");
+    return TRUE;
+}
+
+BOOLEAN test_make_leaf_empty_key_size_and_tag()
+{
+    TEST_START("make_leaf: empty key -> size=base, tag correct");
+
+    reset_mock_state();
+
+    const SIZE_T base = FIELD_OFFSET(ART_LEAF, key);
+    ULONG a0 = g_alloc_call_count;
+
+    ART_LEAF* lf = make_leaf(NULL, 0, 0x13572468);
+    TEST_ASSERT(lf != NULL, "empty key should succeed");
+    TEST_ASSERT(g_alloc_call_count == a0 + 1, "one allocation");
+    TEST_ASSERT(g_last_allocated_tag == ART_TAG, "ART_TAG must be used");
+    TEST_ASSERT(g_last_allocated_size == base + 0, "size must be exactly base");
+
+    if (lf) ExFreePool2(lf, ART_TAG, NULL, 0);
+
+    TEST_END("make_leaf: empty key -> size=base, tag correct");
+    return TRUE;
+}
+
+BOOLEAN test_make_leaf_zero_len_does_not_copy()
+{
+    TEST_START("make_leaf: zero length does not copy");
+
+    reset_mock_state();
+
+    // Rasgele bir buffer ver ama uzunluk 0, kopya olmamalı
+    PUCHAR bogus = (PUCHAR)(ULONG_PTR)0xDEADBEEF; // Sadece işaret, erişilmemeli
+    ART_LEAF* lf = make_leaf(bogus, 0, 0x01010101);
+    TEST_ASSERT(lf != NULL, "len=0 should succeed without touching key");
+
+    // İçerik beklentileri:
+    TEST_ASSERT(lf->key_length == 0, "key_length == 0");
+    // FAM bölgesi zaten 0’landı
+    if (lf) ExFreePool2(lf, ART_TAG, NULL, 0);
+
+    TEST_END("make_leaf: zero length does not copy");
+    return TRUE;
+}
 
 /* =========================================================
    Test 7: Stress — varied lengths including 0
@@ -304,6 +370,10 @@ NTSTATUS run_all_make_leaf_tests()
     if (!test_make_leaf_max_boundary_success())     all_passed = FALSE; // 5
     if (!test_make_leaf_exceed_max_length())        all_passed = FALSE; // 6
     if (!test_make_leaf_stress_mixed_lengths())     all_passed = FALSE; // 7
+    if (!test_make_leaf_uses_correct_tag_and_size())     all_passed = FALSE;
+    if (!test_make_leaf_empty_key_size_and_tag())        all_passed = FALSE;
+    if (!test_make_leaf_zero_len_does_not_copy())        all_passed = FALSE;
+
 
     LOG_MSG("\n========================================\n");
     if (all_passed) {

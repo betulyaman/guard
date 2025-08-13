@@ -48,25 +48,24 @@ BOOLEAN test_free_leaf_valid_free_and_nulling()
     TEST_START("free_leaf: valid free & nulling");
     reset_mock_state();
 
-    ART_LEAF* lf = test_alloc_leaf((USHORT)42, 0x00); // FIX: add start_val
+    ART_LEAF* lf = test_alloc_leaf((USHORT)42, 0x00);
     TEST_ASSERT(lf != NULL, "Leaf allocation succeeded");
     ART_LEAF** plf = &lf;
 
     free_leaf(plf);
 
     TEST_ASSERT(*plf == NULL, "Pointer-to-pointer must be set to NULL after free");
-
     TEST_ASSERT(g_free_call_count == 1, "Exactly one free must occur");
     TEST_ASSERT(g_last_freed_tag == ART_TAG, "Must use ART_TAG for free");
 
-    TEST_ASSERT(g_last_freed_leaf_keylen_before_free == LEAF_FREED_MAGIC,
-        "DEBUG: key_length must be poisoned (LEAF_FREED_MAGIC) before free");
-
-
+    // The SUT captures the pre-free length, not the poison value.
+    TEST_ASSERT(g_last_freed_leaf_keylen_before_free == 42,
+        "Captured key_length before free must equal the original key_length");
 
     TEST_END("free_leaf: valid free & nulling");
     return TRUE;
 }
+
 
 /*========================================================
   Test 3: Idempotency (double call)
@@ -106,19 +105,22 @@ BOOLEAN test_free_leaf_double_free_detection_path()
     reset_mock_state();
 
     // simulate "already poisoned" leaf (as if double-free)
-    ART_LEAF* lf = test_alloc_leaf((USHORT)8, 0x00); // FIX: allocate normal size
+    ART_LEAF* lf = test_alloc_leaf((USHORT)8, 0x00);
     TEST_ASSERT(lf != NULL, "Leaf allocation succeeded");
-    lf->key_length = LEAF_FREED_MAGIC; //poison after allocation
+    lf->key_length = LEAF_FREED_MAGIC; // pretend already freed/poisoned
     ART_LEAF** plf = &lf;
 
     free_leaf(plf);
 
+#ifdef DEBUG
+    TEST_ASSERT(g_debugbreak_count == 1, "__debugbreak must be hit once on detection (DEBUG build)");
+#else
+    TEST_ASSERT(g_debugbreak_count == 0, "__debugbreak path is disabled in non-DEBUG builds");
+#endif
 
-
-    TEST_ASSERT(g_debugbreak_count == 1, "__debugbreak must be hit once on detection");
     TEST_ASSERT(g_free_call_count == 1, "Leaf must still be freed exactly once");
-    TEST_ASSERT(g_last_freed_leaf_keylen_before_free == LEAF_FREED_MAGIC, "Poison value observed before free");
-
+    TEST_ASSERT(g_last_freed_leaf_keylen_before_free == LEAF_FREED_MAGIC,
+        "Captured value must reflect poison marker on entry");
     TEST_ASSERT(*plf == NULL, "Pointer NULL after free");
 
     TEST_END("free_leaf: double-free detection path");
@@ -134,38 +136,37 @@ BOOLEAN test_free_leaf_bulk_reverse_order()
     reset_mock_state();
 
     const int N = 12;
-    ART_LEAF* arr[12] = { 0 };   // init to NULL
-    ART_LEAF** addrs[12] = { 0 };  // init to NULL
+    ART_LEAF* arr[12] = { 0 };
+    ART_LEAF** addrs[12] = { 0 };
     int allocs = 0;
 
-    for (int i = 0; i < N; ++i) {
+    for (int i = 0; i < N; ++i)
+    {
         arr[i] = test_alloc_leaf((USHORT)(i + 1), (UCHAR)i);
-        addrs[i] = &arr[i];                // always set address
-        if (arr[i]) ++allocs;              // count only successful allocs
+        addrs[i] = &arr[i];
+        if (arr[i]) { ++allocs; }
     }
 
-    for (int i = N - 1; i >= 0; --i) {
-        free_leaf(addrs[i]);               // safe: free_leaf handles *ptr==NULL as no-op
+    for (int i = N - 1; i >= 0; --i)
+    {
+        free_leaf(addrs[i]);
     }
 
     TEST_ASSERT(g_free_call_count == (ULONG)allocs, "Free count must match allocations");
 
-    if (ART_ENABLE_POISON_ON_FREE) {
-        TEST_ASSERT(g_last_freed_leaf_keylen_before_free == LEAF_FREED_MAGIC,
-            "Last freed leaf observed poisoned before free");
-    }
-    else {
-        // Either skip, or assert the non-poisoned observation:
-        // TEST_ASSERT(g_last_freed_leaf_keylen_before_free != LEAF_FREED_MAGIC, "..."); 
-    }
+    // Last freed leaf in reverse loop is i==0 -> key_length == 1
+    TEST_ASSERT(g_last_freed_leaf_keylen_before_free == 1,
+        "The last observed key_length before free must be 1 (from index 0)");
 
-    for (int i = 0; i < N; ++i) {
+    for (int i = 0; i < N; ++i)
+    {
         TEST_ASSERT(*addrs[i] == NULL, "Each pointer must be NULL after free");
     }
 
     TEST_END("free_leaf: bulk reverse order");
     return TRUE;
 }
+
 
 /*========================================================
   Test 6: Stress — many alloc/free cycles

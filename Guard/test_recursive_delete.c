@@ -362,7 +362,7 @@ BOOLEAN test_recursive_delete_missing_child()
 }
 
 // ===============================================================
-// Test 7: Depth > 0 – delete deeper leaf (two-level)
+// Test 7: Depth > 0 – delete deeper leaf (two-level) using parent slot
 // ===============================================================
 BOOLEAN test_recursive_delete_two_level_depth()
 {
@@ -376,24 +376,28 @@ BOOLEAN test_recursive_delete_two_level_depth()
     ART_NODE4* root = rd_make_two_level_internal_then_leaf(&ref, 'p', 'q', 'r', &leaf);
     TEST_ASSERT(root != NULL, "7-pre: two-level tree created");
 
-    // Start at depth 1 -> we're already under 'q' node; key view is {'q','r'}, depth must be 1
+    // 'depth' is relative to the full key. We're starting at the child under 'q',
+    // so the next byte to consume is 'r' at index 2 => depth=2.
     UCHAR full_key[3] = { 'p','q','r' };
-    ART_NODE* childRef = ((ART_NODE4*)ref)->children[0]; // child under 'q'
-    TEST_ASSERT(!IS_LEAF(childRef), "7-pre2: mid node is internal");
+    ART_NODE** child_slot = &(((ART_NODE4*)ref)->children[0]);
+    ART_NODE* child_node = *child_slot;
+    TEST_ASSERT(!IS_LEAF(child_node), "7-pre2: mid node is internal");
 
-    // 'depth' is relative to the full key ("p","q","r"), not the subtree key.
-    // Since we are starting at the node under 'q', both 'p' and 'q' have already been consumed
-    // in the traversal path, meaning the next byte to match is 'r' at index 2.
-    // Therefore, we must pass depth=2 with the full key to ensure correct matching.
-    // Using depth=1 would incorrectly attempt to match 'q' again, which would fail.
-    ART_LEAF* out = recursive_delete(childRef, &childRef, full_key, 3, 2);
-
+    ART_LEAF* out = recursive_delete(child_node, child_slot, full_key, 3, 2);
     TEST_ASSERT(out == leaf, "7.1: removed deeper leaf");
     if (out) free_leaf(&out);
 
-    // Update tree and cleanup
-    ((ART_NODE4*)ref)->children[0] = childRef;
-    rd_free_tree(&ref);
+    // Clean up whatever remains: root may now be empty/collapsed depending on remove path.
+    if (ref) {
+        if (IS_LEAF(ref)) {
+            ART_LEAF* remain = LEAF_RAW(ref);
+            free_leaf(&remain);
+            ref = NULL;
+        }
+        else {
+            rd_free_tree(&ref);
+        }
+    }
 
     TEST_END("recursive_delete: two-level with depth");
     return TRUE;
