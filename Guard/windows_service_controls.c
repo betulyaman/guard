@@ -76,20 +76,20 @@ BOOLEAN is_trusted_installer_process()
 
     PUNICODE_STRING image_path = NULL;
     if (!NT_SUCCESS(SeLocateProcessImageName(process, &image_path)) || !image_path) {
-        ExFreePool(image_path);
+        if(image_path) ExFreePool(image_path);
         return FALSE;
     }
 
     if (!is_trusted_executable(image_path)) {
-        ExFreePool(image_path);
+        if (image_path) ExFreePool(image_path);
         return FALSE;
     }
 
     if (!is_process_token_trusted(process)) {
-        ExFreePool(image_path);
+        if (image_path) ExFreePool(image_path);
         return FALSE;
     }
 
-    ExFreePool(image_path);
+    if (image_path) ExFreePool(image_path);
     return TRUE;
 }

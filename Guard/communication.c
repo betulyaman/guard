@@ -8,10 +8,6 @@
 
 #include <ntstrsafe.h>
 
-#if DEBUG
-#include "test_art.h"
-#endif
-
 NTSTATUS get_file_name(_Inout_ PFLT_CALLBACK_DATA data, _Out_ PUNICODE_STRING file_name);
 LONG exception_handler(_In_ PEXCEPTION_POINTERS ExceptionPointer, _In_ BOOLEAN AccessingUserBuffer);
 
@@ -118,7 +114,7 @@ NTSTATUS message_notify_callback(
             g_context.connection_state = CONNECTION_AUTHENTICATING;
 
 
-            LOG_MSG("Connection authenticating.\n");
+            DbgPrint("Connection authenticating.\n");
             return STATUS_SUCCESS;
         } break;
 
@@ -139,11 +135,11 @@ NTSTATUS message_notify_callback(
             NTSTATUS status = verify_HMAC_SHA256_signature(g_context.nonce, user_hmac_signature.hmac);
             if (NT_SUCCESS(status)) {
                 g_context.connection_state = CONNECTION_AUTHENTICATED;
-                LOG_MSG("Connection authenticated.\n");
+                DbgPrint("Connection authenticated.\n");
                 return STATUS_SUCCESS;
             }
             else {
-                LOG_MSG("Authentication failed, closing client port.\n");
+                DbgPrint("Authentication failed, closing client port.\n");
                 if (g_context.client_port != NULL) {
                     FltCloseClientPort(g_context.registered_filter, &g_context.client_port);
                     g_context.client_port = NULL;
@@ -172,35 +168,9 @@ NTSTATUS message_notify_callback(
             RtlCopyMemory(g_context.agent_installation_path, user_initial_context.installation_path, sizeof(user_initial_context.installation_path));
             RtlCopyMemory(g_context.local_db_path, user_initial_context.local_db_path, sizeof(user_initial_context.local_db_path));
 
-            if (user_initial_context.policy_count == 0 ||
-                user_initial_context.policy_count > MAX_POLICY_COUNT) {
-                return STATUS_INVALID_PARAMETER;
-            }
-
-            // Initialize ART, add policies sent by user
+            // Initialize ART
             art_init_tree(&g_art_tree);
 
-            SIZE_T sizeof_policy_array = user_initial_context.policy_count * sizeof(POLICY);
-            try {
-                ProbeForRead(user_initial_context.policies, sizeof_policy_array, __alignof(POLICY));
-            }
-            except(exception_handler(GetExceptionInformation(), TRUE)) {
-                return GetExceptionCode();
-            }
-
-            for (UINT16 i = 0; i < user_initial_context.policy_count; ++i) {
-                POLICY policy;
-                UNICODE_STRING unicode_string;
-                RtlCopyMemory(&policy, &user_initial_context.policies[i], sizeof(POLICY));
-                policy.path[MAX_FILE_NAME_LENGTH - 1] = L'\0';
-                RtlInitUnicodeStringEx(&unicode_string, policy.path);
-                art_insert(&g_art_tree, &unicode_string, policy.access_mask, NULL);
-            }
-
-#if DEBUG
-            art_validate_tree_quick(&g_art_tree);
-            art_print_tree(&g_art_tree);
-#endif
             g_context.connection_state = CONNECTION_CONNECTED;
             return STATUS_SUCCESS;
         } break;
@@ -224,21 +194,17 @@ NTSTATUS message_notify_callback(
             policy.path[MAX_FILE_NAME_LENGTH - 1] = L'\0';
             RtlInitUnicodeStringEx(&unicode_string, policy.path);
 
-            if (policy.status == POLICY_STATUS_ADD) {
-                LOG_MSG("\n\rADD %ls\n\r", policy.path);
-                art_insert(&g_art_tree, &unicode_string, policy.access_mask, NULL);
-#if DEBUG
-                LOG_MSG("\n\rNEW TREE: \n\r");
-                art_validate_tree_quick(&g_art_tree);
+            if (policy.status == POLICY_STATUS_ADD) {    
+                art_insert(&g_art_tree, &unicode_string, policy.access_mask);
+#if TEST
+                LOG_MSG("\n\r----ADD------\n\r");
                 art_print_tree(&g_art_tree);
 #endif
             }
             else if (policy.status == POLICY_STATUS_REMOVE) {
-                LOG_MSG("\n\rREMOVE %ls\n\r", policy.path);
-                art_delete_subtree(&g_art_tree, &unicode_string);
-#if DEBUG
-                LOG_MSG("\n\rNEW TREE: \n\r");
-                art_validate_tree_quick(&g_art_tree);
+                art_delete_all_child(&g_art_tree, &unicode_string);
+#if TEST
+                LOG_MSG("\n\r----REMOVE------\n\r");
                 art_print_tree(&g_art_tree);
 #endif
             }
@@ -246,8 +212,8 @@ NTSTATUS message_notify_callback(
             {
                 LOG_MSG("Unexpected policy status!");
             }
-            LOG_MSG("\n\n\n");
-           //LOG_MSG("Connection established.\n");
+
+           //DbgPrint("Connection established.\n");
            //if ((input_buffer == NULL) ||
            //    (input_buffer_length < (FIELD_OFFSET(USER_RESPONSE, operation_id) +
            //        sizeof(USER_RESPONSE)))) {
@@ -280,7 +246,7 @@ NTSTATUS message_notify_callback(
 
            //}
 
-           //ExFreePool2(replied_operation, PENDING_OPERATION_TAG, NULL, 0);
+           //ExFreePoolWithTag(replied_operation, PENDING_OPERATION_TAG);
 
             return STATUS_SUCCESS;
         } break;

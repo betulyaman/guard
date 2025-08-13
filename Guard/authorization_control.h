@@ -3,6 +3,6 @@
 
 #include <fltKernel.h>
 
-BOOLEAN is_authorized(_In_ PFLT_CALLBACK_DATA data);
+BOOLEAN is_authorized(_In_ PFLT_CALLBACK_DATA data, _In_ PFLT_FILE_NAME_INFORMATION name_info);
 
 #endif // GUARD_AUTHORIZATION_CONTROL_H
