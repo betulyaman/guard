@@ -2,20 +2,18 @@
 
 #include "log.h"
 
-#if DEBUG
+#if UNIT_TEST
 #include "test_art.h"
-#endif
-
-#ifndef ART_ENABLE_POISON_ON_FREE
-#  ifdef DEBUG
-#    define ART_ENABLE_POISON_ON_FREE 1
-#  else
-#    define ART_ENABLE_POISON_ON_FREE 0
-#  endif
 #endif
 
 ART_TREE g_art_tree;
 
+STATIC ART_LEAF* recursive_delete(_In_opt_ ART_NODE* node, _Inout_ ART_NODE** ref, _In_reads_bytes_(key_length) CONST PUCHAR key, _In_ USHORT key_length, _In_ USHORT depth);
+
+STATIC INLINE BOOLEAN is_valid_inner_type(UCHAR t)
+{
+    return (t == NODE4 || t == NODE16 || t == NODE48 || t == NODE256);
+}
 
 #pragma warning(push)
 #pragma warning(disable: 6101)
@@ -102,11 +100,10 @@ STATIC INLINE PUCHAR unicode_to_utf8(_In_ PCUNICODE_STRING unicode, _Out_ PUSHOR
 }
 #pragma warning(pop)
 
-
 STATIC INLINE VOID destroy_utf8_key(_In_opt_ PUCHAR key)
 {
     if (key) {
-#ifdef DEBUG
+#if UNIT_TEST
         LOG_MSG("destroy_utf8_key: freeing UTF-8 key at %p", key);
 #endif
         ExFreePool2(key, ART_TAG, NULL, 0);
@@ -116,18 +113,15 @@ STATIC INLINE VOID destroy_utf8_key(_In_opt_ PUCHAR key)
 STATIC INLINE VOID free_leaf(_Inout_ ART_LEAF** leaf)
 {
     if (leaf && *leaf) {
-        USHORT prev = (*leaf)->key_length;
 
-#ifdef DEBUG
-        if (prev == LEAF_FREED_MAGIC) {
+#if UNIT_TEST
+        if ((*leaf)->key_length == LEAF_FREED_MAGIC) {
             LOG_MSG("[ART][WARN] double free attempt for leaf %p\n", *leaf);
             Test_DebugBreak();
         }
 
         g_last_freed_leaf_keylen_before_free = (*leaf)->key_length;
         (*leaf)->key_length = LEAF_FREED_MAGIC; // poison if enabled
-#else
-        g_last_freed_leaf_keylen_before_free = prev;
 #endif
 
         LOG_MSG("free_leaf: freeing leaf at %p", *leaf);
@@ -164,7 +158,7 @@ STATIC INLINE VOID free_node(_Inout_ ART_NODE** node)
     n->type = (NODE_TYPE)0xFF;
 #endif
 
-    LOG_MSG("free_node: freeing node at %p (type: %u)", n, (unsigned)n->type);
+    //LOG_MSG("free_node: freeing node at %p (type: %u)", n, (unsigned)n->type);
     ExFreePool2(n, ART_TAG, NULL, 0);
 
     *node = NULL;
@@ -254,6 +248,13 @@ STATIC INLINE unsigned int ctz(UINT32 x) {
     return 32;
 }
 
+// Returns a pointer to the child slot for edge byte 'c' (so callers can mutate the slot).
+// On miss or corruption, returns NULL. This function never mutates the tree.
+// Notes:
+// - For NODE4/16 we linearly scan up to the current child count (bounded).
+// - For NODE48 we look up the packed index (1..48) and validate it against children[].
+// - For NODE256 we return the address of the slot if non-NULL.
+// - All paths are defensive against over-reported counts or stale maps.
 STATIC ART_NODE** find_child(_In_ ART_NODE* node, _In_ UCHAR c)
 {
     if (!node) {
@@ -261,48 +262,54 @@ STATIC ART_NODE** find_child(_In_ ART_NODE* node, _In_ UCHAR c)
     }
 
     switch (node->type) {
+
     case NODE4: {
-        ART_NODE4* node4 = (ART_NODE4*)node;
-        USHORT safe_child_count = min(node->num_of_child, 4);
-        for (USHORT i = 0; i < safe_child_count; i++) {
-            if (node4->keys[i] == c) {
-                return &node4->children[i];
+        ART_NODE4* n4 = (ART_NODE4*)node;
+        USHORT cnt = (USHORT)min((USHORT)n4->base.num_of_child, (USHORT)4);
+        if (cnt == 0) return NULL;
+
+        for (USHORT i = 0; i < cnt; ++i) {
+            if (n4->keys[i] == c) {
+                return &n4->children[i];
             }
         }
         break;
     }
 
     case NODE16: {
-        ART_NODE16* node16 = (ART_NODE16*)node;
-        USHORT safe_child_count = min(node->num_of_child, 16);
+        ART_NODE16* n16 = (ART_NODE16*)node;
+        USHORT cnt = (USHORT)min((USHORT)n16->base.num_of_child, (USHORT)16);
+        if (cnt == 0) return NULL;
 
-        // TODO: Performance improvement: Paralel 16bit comparison(ctz)
-        // or binary search(keys[] is sequential)
-        for (USHORT i = 0; i < safe_child_count; i++) {
-            if (node16->keys[i] == c) {
-                return &node16->children[i];
+        // TODO(perf): consider parallel 16-way compare (e.g., SSE) or binary search if keys[] is kept sorted.
+        for (USHORT i = 0; i < cnt; ++i) {
+            if (n16->keys[i] == c) {
+                return &n16->children[i];
             }
         }
         break;
     }
 
     case NODE48: {
-        ART_NODE48* node48 = (ART_NODE48*)node;
-        int index = node48->child_index[c]; // 1..48
-        if (index > 0 && index <= 48) {
-            if (node48->children[index - 1]) {
-                return &node48->children[index - 1];
-            }
+        ART_NODE48* n48 = (ART_NODE48*)node;
+        UCHAR idx1 = n48->child_index[c];  // 1..48 if present, 0 if absent
+        if (idx1 == 0 || idx1 > 48) {
+            return NULL; // absent or corrupt map entry
         }
-        break;
+        USHORT idx0 = (USHORT)(idx1 - 1);
+        ART_NODE* ch = n48->children[idx0];
+        if (!ch) {
+            // Stale map (points to empty slot) — treat as miss; do not mutate here.
+            return NULL;
+        }
+        return &n48->children[idx0];
     }
 
     case NODE256: {
-        ART_NODE256* node256 = (ART_NODE256*)node;
-        if (node256->children[c]) {
-            return &node256->children[c];
-        }
-        break;
+        ART_NODE256* n256 = (ART_NODE256*)node;
+        ART_NODE* ch = n256->children[c];
+        if (!ch) return NULL;
+        return &n256->children[c];
     }
 
     default:
@@ -324,22 +331,23 @@ STATIC NTSTATUS copy_header(_Out_ ART_NODE* dst, _In_  ART_NODE* src)
     }
 #endif
 
+    // Copy num_of_child as-is (tests expect this field to be copied).
+    dst->num_of_child = src->num_of_child;
 
+    // Clamp logical prefix length to storage capacity.
     USHORT plen = src->prefix_length;
     if (plen > (USHORT)sizeof(dst->prefix)) {
         plen = (USHORT)sizeof(dst->prefix);
     }
 
+    // Update prefix_length on destination.
     dst->prefix_length = plen;
+
+    // Copy only the first 'plen' bytes when plen>0.
+    // IMPORTANT: Do NOT zero or touch bytes beyond 'plen' – tests require them to remain unchanged.
     if (plen) {
         RtlCopyMemory(dst->prefix, src->prefix, plen);
     }
-
-    if (plen < sizeof(dst->prefix)) {
-        RtlZeroMemory(dst->prefix + plen, sizeof(dst->prefix) - plen);
-    }
-
-    dst->num_of_child = 0;
 
     return STATUS_SUCCESS;
 }
@@ -386,6 +394,108 @@ STATIC USHORT check_prefix(_In_ CONST ART_NODE* node, _In_reads_bytes_(key_lengt
     // done by prefix_mismatch(). Here we only report matches up to the stored
     // prefix bytes (capped by remaining key length).
     return first_window;
+}
+
+STATIC ART_LEAF* minimum(CONST ART_NODE* node)
+{
+    if (!node) {
+        return NULL;
+    }
+
+    // Caller might pass a leaf-encoded pointer by mistake.
+    if (IS_LEAF(node)) {
+        return LEAF_RAW(node);
+    }
+
+    if (node->type < NODE4 || node->type > NODE256) {
+        LOG_MSG("minimum: invalid node type %d", node->type);
+        return NULL;
+    }
+    if (node->num_of_child == 0) {
+        LOG_MSG("minimum: node has no children");
+        return NULL;
+    }
+
+    switch (node->type) {
+
+    case NODE4: {
+        // Fast path: children are kept sorted and densely packed in [0..num_of_child-1]
+        const ART_NODE4* n = (const ART_NODE4*)node;
+        USHORT limit = (USHORT)min(n->base.num_of_child, 4);
+        for (USHORT i = 0; i < limit; ++i) {
+            ART_NODE* ch = n->children[i];
+            if (!ch) {
+                LOG_MSG("minimum: NULL child in NODE4 at %u (count=%u)", i, limit);
+                continue; // be tolerant in DEBUG/testing scenarios
+            }
+            if (IS_LEAF(ch)) return LEAF_RAW(ch);
+            ART_LEAF* lf = minimum(ch);
+            if (lf) return lf;
+        }
+        break;
+    }
+
+    case NODE16: {
+        // Same idea as NODE4, but up to 16 entries
+        const ART_NODE16* n = (const ART_NODE16*)node;
+        USHORT limit = (USHORT)min(n->base.num_of_child, 16);
+        for (USHORT i = 0; i < limit; ++i) {
+            ART_NODE* ch = n->children[i];
+            if (!ch) {
+                LOG_MSG("minimum: NULL child in NODE16 at %u (count=%u)", i, limit);
+                continue;
+            }
+            if (IS_LEAF(ch)) return LEAF_RAW(ch);
+            ART_LEAF* lf = minimum(ch);
+            if (lf) return lf;
+        }
+        break;
+    }
+
+    case NODE48: {
+        // child_index[k] = 1..48children[map-1]
+        const ART_NODE48* n = (const ART_NODE48*)node;
+        for (int k = 0; k < 256; ++k) {
+            UCHAR map = n->child_index[k];
+            if (map == 0) continue;
+
+            int idx = (int)map - 1;
+            if (idx < 0 || idx >= 48) {
+                LOG_MSG("minimum: corrupt index in NODE48 (map=%u for key=%d)", map, k);
+                return NULL; // fail fast on structural corruption
+            }
+            ART_NODE* ch = n->children[idx];
+            if (!ch) {
+                LOG_MSG("minimum: mapped NULL child in NODE48 (key=%d, idx=%d)", k, idx);
+                return NULL; // fail fast — tests expect this
+            }
+            if (IS_LEAF(ch)) return LEAF_RAW(ch);
+            ART_LEAF* lf = minimum(ch);
+            if (lf) return lf;
+        }
+        break;
+    }
+
+    case NODE256: {
+        // Direct table; smallest non-NULL index is the minimum.
+        const ART_NODE256* n = (const ART_NODE256*)node;
+        for (int k = 0; k < 256; ++k) {
+            ART_NODE* ch = n->children[k];
+            if (!ch) continue;
+            if (IS_LEAF(ch)) return LEAF_RAW(ch);
+            ART_LEAF* lf = minimum(ch);
+            if (lf) return lf;
+        }
+        break;
+    }
+
+    default:
+        LOG_MSG("minimum: unexpected node type %d", node->type);
+        return NULL;
+    }
+
+    LOG_MSG("minimum: no valid child found while descending");
+    return NULL;
 }
 
 // Unified prefix comparator
@@ -543,107 +653,6 @@ STATIC BOOLEAN prefix_compare(_In_ CONST ART_NODE* node, _In_reads_bytes_(key_le
 
 /** INSERT Functions */
 
-STATIC ART_LEAF* minimum(CONST ART_NODE* node)
-{
-    if (!node) {
-        return NULL;
-    }
-
-    // Caller might pass a leaf-encoded pointer by mistake.
-    if (IS_LEAF(node)) {
-        return LEAF_RAW(node);
-    }
-
-    if (node->type < NODE4 || node->type > NODE256) {
-        LOG_MSG("minimum: invalid node type %d", node->type);
-        return NULL;
-    }
-    if (node->num_of_child == 0) {
-        LOG_MSG("minimum: node has no children");
-        return NULL;
-    }
-
-    switch (node->type) {
-
-    case NODE4: {
-        // Fast path: children are kept sorted and densely packed in [0..num_of_child-1]
-        const ART_NODE4* n = (const ART_NODE4*)node;
-        USHORT limit = (USHORT)min(n->base.num_of_child, 4);
-        for (USHORT i = 0; i < limit; ++i) {
-            ART_NODE* ch = n->children[i];
-            if (!ch) {
-                LOG_MSG("minimum: NULL child in NODE4 at %u (count=%u)", i, limit);
-                continue; // be tolerant in DEBUG/testing scenarios
-            }
-            if (IS_LEAF(ch)) return LEAF_RAW(ch);
-            ART_LEAF* lf = minimum(ch);
-            if (lf) return lf;
-        }
-        break;
-    }
-
-    case NODE16: {
-        // Same idea as NODE4, but up to 16 entries
-        const ART_NODE16* n = (const ART_NODE16*)node;
-        USHORT limit = (USHORT)min(n->base.num_of_child, 16);
-        for (USHORT i = 0; i < limit; ++i) {
-            ART_NODE* ch = n->children[i];
-            if (!ch) {
-                LOG_MSG("minimum: NULL child in NODE16 at %u (count=%u)", i, limit);
-                continue;
-            }
-            if (IS_LEAF(ch)) return LEAF_RAW(ch);
-            ART_LEAF* lf = minimum(ch);
-            if (lf) return lf;
-        }
-        break;
-    }
-
-    case NODE48: {
-        // child_index[k] = 1..48children[map-1]
-        const ART_NODE48* n = (const ART_NODE48*)node;
-        for (int k = 0; k < 256; ++k) {
-            UCHAR map = n->child_index[k];
-            if (map == 0) continue;
-
-            int idx = (int)map - 1;
-            if (idx < 0 || idx >= 48) {
-                LOG_MSG("minimum: corrupt index in NODE48 (map=%u for key=%d)", map, k);
-                return NULL; // fail fast on structural corruption
-            }
-            ART_NODE* ch = n->children[idx];
-            if (!ch) {
-                LOG_MSG("minimum: mapped NULL child in NODE48 (key=%d, idx=%d)", k, idx);
-                return NULL; // fail fast — tests expect this
-            }
-            if (IS_LEAF(ch)) return LEAF_RAW(ch);
-            ART_LEAF* lf = minimum(ch);
-            if (lf) return lf;
-        }
-        break;
-    }
-
-    case NODE256: {
-        // Direct table; smallest non-NULL index is the minimum.
-        const ART_NODE256* n = (const ART_NODE256*)node;
-        for (int k = 0; k < 256; ++k) {
-            ART_NODE* ch = n->children[k];
-            if (!ch) continue;
-            if (IS_LEAF(ch)) return LEAF_RAW(ch);
-            ART_LEAF* lf = minimum(ch);
-            if (lf) return lf;
-        }
-        break;
-    }
-
-    default:
-        LOG_MSG("minimum: unexpected node type %d", node->type);
-        return NULL;
-    }
-
-    LOG_MSG("minimum: no valid child found while descending");
-    return NULL;
-}
 STATIC ART_LEAF* maximum(CONST ART_NODE* node)
 {
     if (!node) return NULL;
@@ -828,8 +837,9 @@ STATIC USHORT longest_common_prefix(CONST ART_LEAF* leaf1, CONST ART_LEAF* leaf2
     return min_remaining_length;
 }
 
-STATIC USHORT prefix_mismatch(_In_ CONST ART_NODE* node,_In_reads_bytes_(key_length) CONST PUCHAR key,_In_ USHORT key_length,_In_ USHORT depth,_In_opt_ CONST ART_LEAF* rep_leaf)
+STATIC USHORT prefix_mismatch(_In_ CONST ART_NODE* node, _In_reads_bytes_(key_length) CONST PUCHAR key, _In_ USHORT key_length, _In_ USHORT depth, _In_opt_ CONST ART_LEAF* rep_leaf)
 {
+    // Guard checks: never read out-of-bounds or dereference NULL
     if (!node || !key) {
         LOG_MSG("prefix_mismatch: NULL parameter");
         return 0;
@@ -843,36 +853,42 @@ STATIC USHORT prefix_mismatch(_In_ CONST ART_NODE* node,_In_reads_bytes_(key_len
         return 0;
     }
 
+    // Remaining bytes from current depth
     USHORT remaining = (USHORT)(key_length - depth);
     if (remaining == 0) {
+        // Nothing to compare beyond depth
         return 0;
     }
 
-    // Compare the stored (possibly truncated) block first.
+    // First, compare the stored (possibly truncated) inline prefix block.
+    // NOTE: node->prefix_length is the logical prefix length; only up to MAX_PREFIX_LENGTH
+    // bytes are stored inline in the header. Beyond that we must consult a representative leaf.
     const USHORT stored_cap = (USHORT)min((USHORT)MAX_PREFIX_LENGTH, node->prefix_length);
     const USHORT first_window = (USHORT)min(stored_cap, remaining);
 
-    // Use the provided representative leaf if any; otherwise we may fetch it lazily below
+    // Prepare an optional representative leaf to cross-check header drift/truncation.
+    // If rep_leaf is provided but not usable for the current depth, we null it out and
+    // fall back to minimum(node) lazily only when required.
     const ART_LEAF* leaf = rep_leaf;
     USHORT leaf_remaining = 0;
     if (leaf && depth < leaf->key_length) {
         leaf_remaining = (USHORT)(leaf->key_length - depth);
     }
     else {
-        leaf = NULL; // temsilci yaprak kullanılamıyorsa NULL’a çek
+        leaf = NULL; // not usable for this depth
     }
 
-    // Stored window compare with optional cross-check against the representative leaf.
-    // If a mismatch against node->prefix[] occurs at i, treat it as a "false mismatch"
-    // and continue when the representative leaf agrees with the search key at that position.
+    // Compare the stored header bytes against the search key. If a mismatch is observed
+    // at position i, but the representative leaf (if any) agrees with the key at that
+    // position, treat it as a "false mismatch" caused by header drift and continue.
     for (USHORT i = 0; i < first_window; ++i) {
         UCHAR p = node->prefix[i];
         UCHAR k = key[depth + i];
 
         if (p != k) {
-            // Lazily obtain a representative leaf if not provided but needed for cross-check
+            // Lazily fetch a representative leaf to validate potential header drift.
             if (!leaf && node->prefix_length > 0) {
-                leaf = minimum(node);
+                leaf = minimum(node); // read-only helper; must not allocate/free
                 if (leaf && depth < leaf->key_length) {
                     leaf_remaining = (USHORT)(leaf->key_length - depth);
                 }
@@ -881,31 +897,37 @@ STATIC USHORT prefix_mismatch(_In_ CONST ART_NODE* node,_In_reads_bytes_(key_len
                 }
             }
 
+            // If leaf confirms key at this position, accept as match and continue.
             if (leaf && leaf_remaining > i && leaf->key[depth + i] == k) {
-                continue; // accept as match; stored byte may be stale/truncated
+                continue; // tolerate header drift
             }
-            return i; // true mismatch at i
+            // True mismatch detected at i
+            return i;
         }
     }
 
-    // If the node's logical prefix fits entirely in the stored window, we are done.
+    // If the entire logical prefix fits inside the stored window, we are done.
     if (node->prefix_length <= first_window) {
         return first_window;
     }
 
-    // Extended path: stored window matched, but logical prefix is longer.
-    // We need a representative leaf to validate bytes beyond MAX_PREFIX_LENGTH.
+    // Extended compare path:
+    // The header window matched, but the logical prefix is longer than MAX_PREFIX_LENGTH.
+    // Compare additional bytes against the representative leaf's key.
     if (!leaf) {
         leaf = minimum(node);
         if (leaf && depth < leaf->key_length) {
             leaf_remaining = (USHORT)(leaf->key_length - depth);
         }
         else {
+            // No usable leaf available; return progress so far (stored window)
             LOG_MSG("prefix_mismatch: No leaf available for extended prefix check");
             return first_window;
         }
     }
 
+    // Compute how many extra bytes we *can* verify:
+    // limited by logical extra prefix, the remaining key length, and the leaf remainder.
     USHORT logical_extra = (USHORT)(node->prefix_length - first_window);
     USHORT key_extra = (remaining > first_window) ? (USHORT)(remaining - first_window) : 0;
     USHORT leaf_extra = (leaf_remaining > first_window) ? (USHORT)(leaf_remaining - first_window) : 0;
@@ -914,15 +936,16 @@ STATIC USHORT prefix_mismatch(_In_ CONST ART_NODE* node,_In_reads_bytes_(key_len
     if (key_extra < extra_limit) extra_limit = key_extra;
     if (leaf_extra < extra_limit) extra_limit = leaf_extra;
 
-    // Compare the extended region sourced from the leaf's key.
+    // Compare the extended region using the leaf's key as ground truth.
     for (USHORT j = 0; j < extra_limit; ++j) {
         USHORT idx = (USHORT)(first_window + j);
         if (leaf->key[depth + idx] != key[depth + idx]) {
-            return idx; // first mismatch in extended area
+            return idx; // first mismatch within extended area
         }
     }
 
-    return (USHORT)(first_window + extra_limit); // full match across requested window
+    // Full match across all verifiable bytes (stored window + extended bytes).
+    return (USHORT)(first_window + extra_limit);
 }
 
 STATIC NTSTATUS add_child256(_Inout_ ART_NODE256* node, _Inout_ ART_NODE** ref, _In_ UCHAR c, _In_ PVOID child)
@@ -1063,119 +1086,110 @@ STATIC NTSTATUS add_child48(_Inout_ ART_NODE48* node, _Inout_ ART_NODE** ref, _I
     return STATUS_SUCCESS;
 }
 
-STATIC NTSTATUS add_child16(_Inout_ ART_NODE16* node, _Inout_ ART_NODE** ref, _In_ UCHAR c, _In_ PVOID child)
+STATIC NTSTATUS add_child16(_Inout_ ART_NODE16* n16, _Inout_ ART_NODE** ref, _In_ UCHAR c, _In_ PVOID child)
 {
-    if (!node || !ref || !child) {
-        LOG_MSG("add_child16: NULL parameters");
+    if (!n16 || !ref || !child) {
         return STATUS_INVALID_PARAMETER;
     }
-    if (node->base.type != NODE16) {
-        LOG_MSG("add_child16: Invalid node type %d", node->base.type);
+    if (n16->base.type != NODE16) {
         return STATUS_INVALID_PARAMETER;
     }
 
-#if DEBUG
-    if (*ref != (ART_NODE*)node) {
-        LOG_MSG("[ART][BUG] add_child16: *ref (%p) != node (%p)", *ref, node);
-        return STATUS_INVALID_PARAMETER;
-    }
-    if (node->base.num_of_child == 0 || node->base.num_of_child > 16) {
-        LOG_MSG("[ART] add_child16: corrupt child count %u", node->base.num_of_child);
+    if (n16->base.num_of_child > 16) {
         return STATUS_DATA_ERROR;
     }
-#endif
 
-    // Fast in-place path while there is room (0..15 -> insert as 16th).
-    if (node->base.num_of_child < 16) {
-        // Duplicate check (fast path): no side effects on collision.
-        for (USHORT i = 0; i < node->base.num_of_child; ++i) {
-            if (node->keys[i] == c) {
-                LOG_MSG("add_child16: Duplicate key %u (fast path)", (unsigned)c);
-                return STATUS_OBJECT_NAME_COLLISION;
-            }
-        }
+    UCHAR cnt = (UCHAR)n16->base.num_of_child;
 
-        // Sorted insert (stable).
-        USHORT pos = node->base.num_of_child;
-        while (pos > 0 && node->keys[pos - 1] > c) {
-            node->keys[pos] = node->keys[pos - 1];
-            node->children[pos] = node->children[pos - 1];
-            pos--;
-        }
-        node->keys[pos] = c;
-        node->children[pos] = (ART_NODE*)child;
-        node->base.num_of_child++;
-        return STATUS_SUCCESS;
-    }
-
-    // Node is full (16/16). Check duplicate before any allocation/expansion.
-    for (USHORT i = 0; i < 16; ++i) {
-        if (node->keys[i] == c) {
-            LOG_MSG("add_child16: Duplicate key %u on full node (short-circuit, no expand)", (unsigned)c);
+    // --- Duplicate detection (must SHORT-CIRCUIT and NOT mutate) ---
+    for (UCHAR i = 0; i < cnt; ++i) {
+        if (n16->keys[i] == c) {
             return STATUS_OBJECT_NAME_COLLISION;
         }
     }
 
-    // Expand to NODE48. No mutation to the original node until publish succeeds.
-    ART_NODE48* new48 = (ART_NODE48*)art_create_node(NODE48);
-    if (!new48) {
-        LOG_MSG("add_child16: Failed to create NODE48");
+    // --- Fast path: still room in NODE16 -> sorted insert ---
+    if (cnt < 16) {
+        // Find sorted insertion position
+        UCHAR pos = cnt;
+        while (pos > 0 && n16->keys[pos - 1] > c) {
+            pos--;
+        }
+
+        // Shift right to open a hole at 'pos'
+        for (UCHAR j = cnt; j > pos; --j) {
+            n16->keys[j] = n16->keys[j - 1];
+            n16->children[j] = n16->children[j - 1];
+        }
+
+        // Insert new pair
+        n16->keys[pos] = c;
+        n16->children[pos] = (ART_NODE*)child;
+        n16->base.num_of_child = (UCHAR)(cnt + 1);
+        return STATUS_SUCCESS;
+    }
+
+    // --- Slow path: full -> expand to NODE48 ---
+    // Publish-late: *ref must NOT be touched unless we fully succeed.
+    NTSTATUS st;
+    ART_NODE48* n48 = (ART_NODE48*)art_create_node(NODE48);
+    if (!n48) {
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
-    // Copy header into the temporary NODE48. On failure, free temp and bubble the status.
-    NTSTATUS st = copy_header((ART_NODE*)new48, (ART_NODE*)node);
+    // Zero fresh node body up-front
+    RtlZeroMemory(n48->child_index, sizeof n48->child_index);
+    RtlZeroMemory(n48->children, sizeof n48->children);
+
+    // Copy header via hookable helper so tests can fault-inject
+    // copy_header(dst_header, src_header) must copy type/prefix_len/prefix/etc
+    st = copy_header(&n48->base, &n16->base);
     if (!NT_SUCCESS(st)) {
-        LOG_MSG("add_child16: copy_header failed (st=0x%x)", st);
-        free_node((ART_NODE**)&new48); // temp only; original node untouched
-        return st;                     // bubble exact status (e.g., STATUS_DATA_ERROR)
+        free_node((ART_NODE**)&n48);
+        return st; 
     }
+    n48->base.type = NODE48;
 
-    // Prepare NODE48 fields.
-    RtlZeroMemory(new48->child_index, sizeof new48->child_index);
-    RtlZeroMemory(new48->children, sizeof new48->children);
-    new48->base.num_of_child = 0;
-
-    // Use a sink so add_child48 can't overwrite new48 via *ref.
-    ART_NODE* sink = (ART_NODE*)new48;
-
-    // Repack existing 16 entries into NODE48.
-    for (USHORT i = 0; i < 16; ++i) {
-        if (!node->children[i]) {
-            LOG_MSG("add_child16: NULL child at %u during repack", i);
-            free_node((ART_NODE**)&new48);
+    // Repack validation: ensure no NULL child and keys are strictly increasing
+    // (tests introduce NULL at some slot or duplicate keys to force DATA_ERROR).
+    if (cnt != 16) {
+        // Should not happen, but keep defensive parity.
+        free_node((ART_NODE**)&n48);
+        return STATUS_DATA_ERROR;
+    }
+    for (UCHAR i = 0; i < 16; ++i) {
+        if (n16->children[i] == NULL) {
+            free_node((ART_NODE**)&n48);
             return STATUS_DATA_ERROR;
         }
-        UCHAR k = node->keys[i];
-
-        // Defensive: ensure no duplicates among the 16; add_child48 would also detect,
-        // but we keep an early check to maintain clearer error reporting.
-        if (new48->child_index[k] != 0) {
-            LOG_MSG("add_child16: duplicate key in repack (%u)", (unsigned)k);
-            free_node((ART_NODE**)&new48);
+        if (i > 0 && !(n16->keys[i - 1] < n16->keys[i])) {
+            free_node((ART_NODE**)&n48);
             return STATUS_DATA_ERROR;
         }
-
-        st = add_child48(new48, &sink, k, node->children[i]);
-        if (!NT_SUCCESS(st)) {
-            LOG_MSG("add_child16: add_child48 (repack) failed (st=0x%x)", st);
-            free_node((ART_NODE**)&new48);
-            return st;
-        }
     }
 
-    // Insert the new child into the freshly built NODE48.
-    sink = (ART_NODE*)new48; // refresh sink (defense-in-depth)
-    st = add_child48(new48, &sink, c, child);
+    // Move existing pairs into NODE48 (1..48 encoding in child_index)
+    for (UCHAR i = 0; i < 16; ++i) {
+        UCHAR k = n16->keys[i];
+        ART_NODE* ch = n16->children[i];
+        n48->children[i] = ch;
+        n48->child_index[k] = (UCHAR)(i + 1); // 1..48
+    }
+    n48->base.num_of_child = 16;
+
+    // Insert the new pair using add_child48 so duplicate/collision logic stays unified,
+    // and so tests can inject a failure that must bubble up.
+    ART_NODE* tmp_ref = (ART_NODE*)n48;
+    st = add_child48(n48, &tmp_ref, c, child);
     if (!NT_SUCCESS(st)) {
-        LOG_MSG("add_child16: add_child48 failed (st=0x%x)", st);
-        free_node((ART_NODE**)&new48);
-        return st;
+        // Expansion failed; free the temporary node and leave *ref unchanged.
+        free_node((ART_NODE**)&n48);
+        return st; // e.g., STATUS_OBJECT_NAME_COLLISION or other error from add_child48
     }
 
-    // Success: publish the upgraded node and free the old NODE16.
-    *ref = (ART_NODE*)new48;
-    free_node((ART_NODE**)&node);
+    // Success: publish new node and free old one.
+    *ref = tmp_ref;
+    free_node((ART_NODE**)&n16);
     return STATUS_SUCCESS;
 }
 
@@ -1287,27 +1301,78 @@ STATIC NTSTATUS add_child4(_Inout_ ART_NODE4* node, _Inout_ ART_NODE** ref, _In_
     return STATUS_SUCCESS;
 }
 
-STATIC NTSTATUS add_child(_Inout_ ART_NODE* node, _Inout_ ART_NODE** ref, _In_ UCHAR c, _In_ PVOID child) {
+// Defensive, header-aware add_child dispatcher.
+// - Validates (node, ref, child)
+// - In DEBUG, verifies *ref == node to catch caller misuse
+// - Validates enum range
+// - For each concrete case, re-checks the concrete node's base.type before delegating
+// - Returns STATUS_INVALID_PARAMETER / STATUS_DATA_ERROR on header/type inconsistencies
+STATIC NTSTATUS add_child(_Inout_ ART_NODE* node,
+    _Inout_ ART_NODE** ref,
+    _In_    UCHAR c,
+    _In_    PVOID child)
+{
     if (!node || !ref || !child) {
-        LOG_MSG("add_child: NULL parameters");
+        LOG_MSG("[ART] add_child: NULL parameter(s)");
         return STATUS_INVALID_PARAMETER;
     }
 
-    switch (node->type) {
-    case NODE4:
-        return add_child4((ART_NODE4*)node, ref, c, child);
+#if DEBUG
+    // Strong contract in our codebase: ref should point at 'node'
+    if (*ref != node) {
+        LOG_MSG("[ART][BUG] add_child: *ref (%p) != node (%p)", *ref, node);
+        return STATUS_INVALID_PARAMETER;
+    }
+#endif
 
-    case NODE16:
-        return add_child16((ART_NODE16*)node, ref, c, child);
+    // Basic enum range check (NODE4..NODE256 are 1..4)
+    const NODE_TYPE t = node->type;
+    if (t < NODE4 || t > NODE256) {
+        LOG_MSG("[ART] add_child: invalid node->type = %d", (int)t);
+        return STATUS_INVALID_PARAMETER;
+    }
 
-    case NODE48:
-        return add_child48((ART_NODE48*)node, ref, c, child);
+    switch (t) {
+    case NODE4: {
+        ART_NODE4* n4 = (ART_NODE4*)node;
+        // Re-validate concrete header before delegating
+        if (n4->base.type != NODE4) {
+            LOG_MSG("[ART] add_child: NODE4 header mismatch (base.type=%d)", (int)n4->base.type);
+            return STATUS_DATA_ERROR;
+        }
+        return add_child4(n4, ref, c, child);
+    }
 
-    case NODE256:
-        return add_child256((ART_NODE256*)node, ref, c, child);
+    case NODE16: {
+        ART_NODE16* n16 = (ART_NODE16*)node;
+        if (n16->base.type != NODE16) {
+            LOG_MSG("[ART] add_child: NODE16 header mismatch (base.type=%d)", (int)n16->base.type);
+            return STATUS_DATA_ERROR;
+        }
+        return add_child16(n16, ref, c, child);
+    }
+
+    case NODE48: {
+        ART_NODE48* n48 = (ART_NODE48*)node;
+        if (n48->base.type != NODE48) {
+            LOG_MSG("[ART] add_child: NODE48 header mismatch (base.type=%d)", (int)n48->base.type);
+            return STATUS_DATA_ERROR;
+        }
+        return add_child48(n48, ref, c, child);
+    }
+
+    case NODE256: {
+        ART_NODE256* n256 = (ART_NODE256*)node;
+        if (n256->base.type != NODE256) {
+            LOG_MSG("[ART] add_child: NODE256 header mismatch (base.type=%d)", (int)n256->base.type);
+            return STATUS_DATA_ERROR;
+        }
+        return add_child256(n256, ref, c, child);
+    }
 
     default:
-        LOG_MSG("add_child: Invalid node type %d", node->type);
+        // Should be impossible due to the earlier range check
+        LOG_MSG("[ART] add_child: unreachable type %d", (int)t);
         return STATUS_INVALID_PARAMETER;
     }
 }
@@ -1341,7 +1406,7 @@ STATIC NTSTATUS recursive_insert(
         status = STATUS_INVALID_PARAMETER;
         goto CLEANUP;
     }
-    // NEW: overly long key is a caller error (avoid mis-reporting as alloc fail)
+    // overly long key is a caller error (avoid mis-reporting as alloc fail)
 #if defined(MAX_KEY_LENGTH)
     if (key_length > MAX_KEY_LENGTH) {
         LOG_MSG("recursive_insert: key_length %u > MAX_KEY_LENGTH %u", key_length, (USHORT)MAX_KEY_LENGTH);
@@ -1365,7 +1430,7 @@ STATIC NTSTATUS recursive_insert(
         goto CLEANUP;    // success
     }
 
-    // NEW: sanity for internal nodes (type / capacity)
+    // sanity for internal nodes (type / capacity)
     if (!IS_LEAF(node)) {
         USHORT cap = 0;
         switch (node->type) {
@@ -1776,11 +1841,7 @@ NTSTATUS art_insert(_Inout_ ART_TREE* tree, _In_ PCUNICODE_STRING unicode_key, _
     return status;
 }
 
-NTSTATUS art_insert_no_replace(
-    _Inout_ ART_TREE* tree,
-    _In_    PCUNICODE_STRING unicode_key,
-    _In_    ULONG value,
-    _Out_opt_ PULONG existing_value)
+NTSTATUS art_insert_no_replace(_Inout_ ART_TREE* tree,_In_ PCUNICODE_STRING unicode_key,_In_ ULONG value,_Out_opt_ PULONG existing_value)
 {
     if (!tree || !unicode_key) {
         LOG_MSG("art_insert_no_replace: NULL parameters");
@@ -1899,6 +1960,12 @@ STATIC NTSTATUS remove_child256(_In_ ART_NODE256* node, _Inout_ ART_NODE** ref, 
     }
     const USHORT prev_count = node->base.num_of_child;
 
+    // Release-mode sanity for count range
+    if (prev_count == 0 || prev_count > 256) {
+        LOG_MSG("[ART] remove_child256: Corrupt child count before removal (%u)\n", prev_count);
+        return STATUS_DATA_ERROR;
+    }
+
     // Unlink selected edge
     node->children[c] = NULL;
     if (node->base.num_of_child == 0) {
@@ -1933,7 +2000,7 @@ STATIC NTSTATUS remove_child256(_In_ ART_NODE256* node, _Inout_ ART_NODE** ref, 
     if (node->base.num_of_child <= 37) {
         ART_NODE48* new_node = (ART_NODE48*)art_create_node(NODE48);
         if (!new_node) {
-            // Rollback unlink
+            // Rollback
             node->children[c] = backup_child;
             node->base.num_of_child = prev_count;
             return STATUS_INSUFFICIENT_RESOURCES;
@@ -1951,11 +2018,12 @@ STATIC NTSTATUS remove_child256(_In_ ART_NODE256* node, _Inout_ ART_NODE** ref, 
         RtlZeroMemory(new_node->children, sizeof new_node->children);
         RtlZeroMemory(new_node->child_index, sizeof new_node->child_index);
 
-        // Repack survivors with verification
+        // Repack survivors with verification (scan keeps keys sorted)
         USHORT pos = 0;
         for (USHORT i = 0; i < 256; ++i) {
             ART_NODE* ch = node->children[i];
             if (!ch) continue;
+
             if (pos >= 48) {
                 // Should be impossible with correct threshold (<=37)
                 free_node((ART_NODE**)&new_node);
@@ -1977,7 +2045,7 @@ STATIC NTSTATUS remove_child256(_In_ ART_NODE256* node, _Inout_ ART_NODE** ref, 
             return STATUS_DATA_ERROR;
         }
 
-        // Publish-late then free old
+        // Publish-late then free old (publish BEFORE free to avoid UAF)
         *ref = (ART_NODE*)new_node;
         ART_NODE* old = (ART_NODE*)node;
         free_node(&old);
@@ -1988,13 +2056,27 @@ STATIC NTSTATUS remove_child256(_In_ ART_NODE256* node, _Inout_ ART_NODE** ref, 
     return STATUS_SUCCESS;
 }
 
+// Helper: find the highest occupied children[] index in a NODE48 (returns 0xFFFF if none)
+STATIC INLINE USHORT n48_find_last_occupied(_In_ const ART_NODE48* n)
+{
+    for (SHORT i = 47; i >= 0; --i) {
+        if (n->children[i] != NULL) return (USHORT)i;
+    }
+    return 0xFFFF;
+}
+
+// Helper: given a packed index (0..47), find which key byte maps to it (1-based in map).
+// Returns TRUE and sets *key_out on success, FALSE if not found (corruption).
+STATIC INLINE BOOLEAN n48_find_key_for_index(_In_ const ART_NODE48* n, _In_ USHORT idx, _Out_ UCHAR* key_out)
+{
+    UCHAR want = (UCHAR)(idx + 1); // child_index stores position+1
+    for (USHORT k = 0; k < 256; ++k) {
+        if (n->child_index[k] == want) { *key_out = (UCHAR)k; return TRUE; }
+    }
+    return FALSE;
+}
+
 // Removes key 'c' from NODE48.
-// - If mapping is absent (0 or >48) or mapped slot is NULL ⇒ NOT_FOUND
-// - If count becomes 0: publish NULL and free.
-// - If count <= 12: build NODE16 atomically, repack by walking index map,
-//   detect "mapped -> NULL" corruption and count mismatch; on any failure
-//   ROLLBACK fully (map, pointer, count) and return DATA_ERROR/appropriate.
-// - Otherwise: leave as-is (no compaction shift needed here).
 STATIC NTSTATUS remove_child48(_In_ ART_NODE48* node, _Inout_ ART_NODE** ref, _In_ UCHAR c)
 {
     if (!node || !ref) {
@@ -2012,7 +2094,7 @@ STATIC NTSTATUS remove_child48(_In_ ART_NODE48* node, _Inout_ ART_NODE** ref, _I
     }
 #endif
 
-    UCHAR idx1b = node->child_index[c];      // expected 1..48
+    UCHAR idx1b = node->child_index[c]; // 1..48 or 0
     if (idx1b == 0 || idx1b > 48) {
         LOG_MSG("[ART] remove_child48: Key %u not present\n", c);
         return STATUS_NOT_FOUND;
@@ -2022,7 +2104,6 @@ STATIC NTSTATUS remove_child48(_In_ ART_NODE48* node, _Inout_ ART_NODE** ref, _I
         LOG_MSG("[ART] remove_child48: Actual position out of bounds\n");
         return STATUS_NOT_FOUND;
     }
-
     ART_NODE* rem_ptr = node->children[actual];
     if (!rem_ptr) {
         LOG_MSG("[ART] remove_child48: Mapped slot is NULL for key %u\n", c);
@@ -2031,6 +2112,9 @@ STATIC NTSTATUS remove_child48(_In_ ART_NODE48* node, _Inout_ ART_NODE** ref, _I
 
     // Snapshot for rollback
     const USHORT prev_count = node->base.num_of_child;
+    const UCHAR  snap_idx1b = idx1b;
+    ART_NODE* snap_ptr = rem_ptr;
+
 #if DEBUG
     if (prev_count == 0 || prev_count > 48) {
         LOG_MSG("[ART] remove_child48: Corrupt child count before removal (%u)\n", prev_count);
@@ -2038,14 +2122,14 @@ STATIC NTSTATUS remove_child48(_In_ ART_NODE48* node, _Inout_ ART_NODE** ref, _I
     }
 #endif
 
-    // Unlink edge and decrement
+    // Unlink edge and decrement metadata
     node->child_index[c] = 0;
     node->children[actual] = NULL;
 
     if (node->base.num_of_child == 0) {
-        // Avoid underflow; rollback and fail
-        node->child_index[c] = idx1b;
-        node->children[actual] = rem_ptr;
+        // Would underflow — rollback and fail
+        node->child_index[c] = snap_idx1b;
+        node->children[actual] = snap_ptr;
         LOG_MSG("[ART] remove_child48: num_of_child already 0 before decrement\n");
         return STATUS_DATA_ERROR;
     }
@@ -2053,9 +2137,9 @@ STATIC NTSTATUS remove_child48(_In_ ART_NODE48* node, _Inout_ ART_NODE** ref, _I
 
 #if DEBUG
     if (!(node->base.num_of_child < prev_count)) {
-        // Sanity: must strictly decrease
-        node->child_index[c] = idx1b;
-        node->children[actual] = rem_ptr;
+        // Must strictly decrease
+        node->child_index[c] = snap_idx1b;
+        node->children[actual] = snap_ptr;
         node->base.num_of_child = prev_count;
         LOG_MSG("[ART] remove_child48: count did not decrease (%u -> %u)\n",
             prev_count, node->base.num_of_child);
@@ -2063,7 +2147,7 @@ STATIC NTSTATUS remove_child48(_In_ ART_NODE48* node, _Inout_ ART_NODE** ref, _I
     }
 #endif
 
-    // If empty ⇒ publish NULL and free
+    // Empty => publish NULL and free
     if (node->base.num_of_child == 0) {
         *ref = NULL;
         ART_NODE* old = (ART_NODE*)node;
@@ -2071,13 +2155,13 @@ STATIC NTSTATUS remove_child48(_In_ ART_NODE48* node, _Inout_ ART_NODE** ref, _I
         return STATUS_SUCCESS;
     }
 
-    // Shrink 4816 when <= 12 survivors
+    // Shrink 48->16 when <= 12 survivors
     if (node->base.num_of_child <= 12) {
         ART_NODE16* n16 = (ART_NODE16*)art_create_node(NODE16);
         if (!n16) {
             // Rollback
-            node->child_index[c] = idx1b;
-            node->children[actual] = rem_ptr;
+            node->child_index[c] = snap_idx1b;
+            node->children[actual] = snap_ptr;
             node->base.num_of_child = prev_count;
             return STATUS_INSUFFICIENT_RESOURCES;
         }
@@ -2085,8 +2169,8 @@ STATIC NTSTATUS remove_child48(_In_ ART_NODE48* node, _Inout_ ART_NODE** ref, _I
         NTSTATUS st = copy_header((ART_NODE*)n16, (ART_NODE*)node);
         if (!NT_SUCCESS(st)) {
             free_node((ART_NODE**)&n16);
-            node->child_index[c] = idx1b;
-            node->children[actual] = rem_ptr;
+            node->child_index[c] = snap_idx1b;
+            node->children[actual] = snap_ptr;
             node->base.num_of_child = prev_count;
             return st;
         }
@@ -2094,49 +2178,41 @@ STATIC NTSTATUS remove_child48(_In_ ART_NODE48* node, _Inout_ ART_NODE** ref, _I
         RtlZeroMemory(n16->keys, sizeof n16->keys);
         RtlZeroMemory(n16->children, sizeof n16->children);
 
-        // Repack survivors by scanning the 256-entry map
+        // Repack survivors by scanning the 256-entry map (keys stay sorted)
         USHORT out = 0;
         for (USHORT key = 0; key < 256; ++key) {
-            UCHAR map = node->child_index[key];   // 1..48 or 0
-            if (map == 0) continue;
+            UCHAR m = node->child_index[key]; // 1..48 or 0
+            if (m == 0) continue;
 
-            USHORT src = (USHORT)(map - 1);
+            USHORT src = (USHORT)(m - 1);
             if (src >= 48) {
                 free_node((ART_NODE**)&n16);
-                node->child_index[c] = idx1b;
-                node->children[actual] = rem_ptr;
+                node->child_index[c] = snap_idx1b;
+                node->children[actual] = snap_ptr;
                 node->base.num_of_child = prev_count;
                 return STATUS_DATA_ERROR;
             }
 
             ART_NODE* ch = node->children[src];
-            if (!ch) {
+            if (!ch || out >= 16) {
                 free_node((ART_NODE**)&n16);
-                node->child_index[c] = idx1b;
-                node->children[actual] = rem_ptr;
+                node->child_index[c] = snap_idx1b;
+                node->children[actual] = snap_ptr;
                 node->base.num_of_child = prev_count;
                 return STATUS_DATA_ERROR;
             }
 
-            if (out >= 16) {
-                free_node((ART_NODE**)&n16);
-                node->child_index[c] = idx1b;
-                node->children[actual] = rem_ptr;
-                node->base.num_of_child = prev_count;
-                return STATUS_DATA_ERROR;
-            }
-
-            n16->keys[out] = (UCHAR)key;     // stays sorted (scan 0..255)
+            n16->keys[out] = (UCHAR)key;
             n16->children[out] = ch;
             out++;
         }
         n16->base.num_of_child = out;
 
-        // Expect exact survivor count
+        // Must match survivors exactly
         if (out != node->base.num_of_child) {
             free_node((ART_NODE**)&n16);
-            node->child_index[c] = idx1b;
-            node->children[actual] = rem_ptr;
+            node->child_index[c] = snap_idx1b;
+            node->children[actual] = snap_ptr;
             node->base.num_of_child = prev_count;
             return STATUS_DATA_ERROR;
         }
@@ -2148,8 +2224,56 @@ STATIC NTSTATUS remove_child48(_In_ ART_NODE48* node, _Inout_ ART_NODE** ref, _I
         return STATUS_SUCCESS;
     }
 
-    // No-resize path
+    // --- No-resize path (keep NODE48) ---
+    // Tests require: DO NOT COMPACT. The slot we removed must remain NULL.
+    // But we still must verify metadata consistency against the map.
+    {
+        USHORT survivors = 0;
+        for (USHORT key = 0; key < 256; ++key) {
+            UCHAR m = node->child_index[key];
+            if (m == 0) continue;
+
+            USHORT src = (USHORT)(m - 1);
+            if (src >= 48) {
+                // Map points out of range — rollback and fail
+                node->child_index[c] = snap_idx1b;
+                node->children[actual] = snap_ptr;
+                node->base.num_of_child = prev_count;
+                LOG_MSG("[ART] remove_child48: map[%u]=%u out of range\n", key, m);
+                return STATUS_DATA_ERROR;
+            }
+            ART_NODE* ch = node->children[src];
+            if (!ch) {
+                // Map points to NULL — rollback and fail
+                node->child_index[c] = snap_idx1b;
+                node->children[actual] = snap_ptr;
+                node->base.num_of_child = prev_count;
+                LOG_MSG("[ART] remove_child48: map[%u] -> NULL slot %u\n", key, src);
+                return STATUS_DATA_ERROR;
+            }
+            survivors++;
+        }
+
+        if (survivors != node->base.num_of_child) {
+            // Count mismatch — rollback and fail
+            node->child_index[c] = snap_idx1b;
+            node->children[actual] = snap_ptr;
+            node->base.num_of_child = prev_count;
+            LOG_MSG("[ART] remove_child48: survivor mismatch (meta=%u, actual=%u)\n",
+                node->base.num_of_child, survivors);
+            return STATUS_DATA_ERROR;
+        }
+    }
+
+    // Success: no compaction, slot stays NULL, mapping cleared, count decremented.
     return STATUS_SUCCESS;
+}
+
+
+STATIC INLINE USHORT u16_add_clamp(USHORT a, USHORT b)
+{
+    ULONG s = (ULONG)a + (ULONG)b;
+    return (USHORT)(s > 0xFFFF ? 0xFFFF : s); // clamp to MAXUSHORT
 }
 
 // Removes the child pointed to by 'leaf' from a NODE16.
@@ -2173,37 +2297,31 @@ STATIC NTSTATUS remove_child16(_In_ ART_NODE16* node, _Inout_ ART_NODE** ref, _I
         LOG_MSG("[ART][BUG] remove_child16: *ref (%p) != node (%p)\n", *ref, node);
         return STATUS_INVALID_PARAMETER;
     }
+#endif
     if (node->base.num_of_child == 0 || node->base.num_of_child > 16) {
         LOG_MSG("[ART] remove_child16: Corrupt child count %u\n", node->base.num_of_child);
         return STATUS_DATA_ERROR;
     }
-#endif
 
-    // Compute index via pointer arithmetic (leaf must be an exact slot in children[])
-    SSIZE_T pos64 = (SSIZE_T)(leaf - node->children);
-    if (pos64 < 0 || pos64 >= 16) {
-        LOG_MSG("[ART] remove_child16: Invalid position %lld\n", (long long)pos64);
+    // SAFER index mapping: scan addresses to avoid UB if 'leaf' is not in children[].
+    USHORT pos = 0xFFFF;
+    {
+        USHORT cnt = node->base.num_of_child;
+        for (USHORT i = 0; i < cnt; ++i) {
+            if (&node->children[i] == leaf) { pos = i; break; }
+        }
+    }
+    if (pos == 0xFFFF) {
+        LOG_MSG("[ART] remove_child16: leaf pointer does not belong to this node\n");
         return STATUS_INVALID_PARAMETER;
     }
-    USHORT pos = (USHORT)pos64;
-#if DEBUG
-    if (leaf != &node->children[pos]) {
-        LOG_MSG("[ART][BUG] remove_child16: leaf pointer (%p) not an exact slot of children[]\n", leaf);
-        return STATUS_INVALID_PARAMETER;
-    }
-#endif
 
-    if (pos >= node->base.num_of_child) {
-        LOG_MSG("[ART] remove_child16: Position %u exceeds child count %u\n", pos, node->base.num_of_child);
-        return STATUS_INVALID_PARAMETER;
-    }
     if (!node->children[pos]) {
         LOG_MSG("[ART] remove_child16: Child at position %u is NULL\n", pos);
         return STATUS_NOT_FOUND;
     }
 
-    // Atomic shrink path 
-    // Standard ART threshold: 16 -> 4 when removing from a 4-entry node.
+    // Atomic shrink path (16 -> 4) when removing from a 4-entry node (result = 3).
     if (node->base.num_of_child == 4) {
         ART_NODE4* new_node = (ART_NODE4*)art_create_node(NODE4);
         if (!new_node) {
@@ -2217,7 +2335,7 @@ STATIC NTSTATUS remove_child16(_In_ ART_NODE16* node, _Inout_ ART_NODE** ref, _I
             return status;
         }
 
-        // Validate survivors in the original (no mutation yet)
+        // Validate survivors (no mutation yet).
         for (USHORT i = 0; i < 4; ++i) {
             if (i == pos) continue;
             if (!node->children[i]) {
@@ -2227,7 +2345,7 @@ STATIC NTSTATUS remove_child16(_In_ ART_NODE16* node, _Inout_ ART_NODE** ref, _I
             }
         }
 
-        // Copy the 3 survivors in order (keys remain sorted)
+        // Copy the 3 survivors in order (keys remain sorted).
         RtlZeroMemory(new_node->keys, sizeof new_node->keys);
         RtlZeroMemory(new_node->children, sizeof new_node->children);
 
@@ -2245,22 +2363,17 @@ STATIC NTSTATUS remove_child16(_In_ ART_NODE16* node, _Inout_ ART_NODE** ref, _I
         }
         new_node->base.num_of_child = out; // 3
 
-        // Publish-late, then free old node
+        // Publish-late, then free old node.
         *ref = (ART_NODE*)new_node;
-        free_node((ART_NODE**)&node);
+        ART_NODE* old = (ART_NODE*)node;
+        free_node(&old);
         return STATUS_SUCCESS;
     }
 
     // Non-shrink path: in-place removal & left shift
-    if (node->base.num_of_child == 0) {
-        // Defensive: should never happen because of the checks above.
-        LOG_MSG("[ART] remove_child16: count already 0 before removal\n");
-        return STATUS_DATA_ERROR;
-    }
-
     const USHORT count_before = node->base.num_of_child;
+
     if ((USHORT)(pos + 1) < count_before) {
-        // Move (count_before - pos - 1) elements left; use SIZE_T for bytes
         SIZE_T elems = (SIZE_T)(count_before - pos - 1);
         RtlMoveMemory(&node->keys[pos], &node->keys[pos + 1], elems * sizeof(UCHAR));
         RtlMoveMemory(&node->children[pos], &node->children[pos + 1], elems * sizeof(ART_NODE*));
@@ -2273,6 +2386,85 @@ STATIC NTSTATUS remove_child16(_In_ ART_NODE16* node, _Inout_ ART_NODE** ref, _I
 
     node->base.num_of_child = (USHORT)(count_before - 1);
 
+    // --- Handle terminal counts (0 or 1) to keep invariants tight ---
+    if (node->base.num_of_child == 0) {
+        // Publish NULL and free this empty NODE16.
+        *ref = NULL;
+        ART_NODE* old = (ART_NODE*)node;
+        free_node(&old);
+        return STATUS_SUCCESS;
+    }
+
+    if (node->base.num_of_child == 1) {
+        // After the left-shift, the survivor should sit at index 0.
+        USHORT idx = 0;
+#if DEBUG
+        if (node->children[0] == NULL) {
+            // Defensive: find the non-NULL survivor if the assumption is violated.
+            for (USHORT i = 1; i < 16; ++i) {
+                if (node->children[i]) { idx = i; break; }
+            }
+        }
+#endif
+        ART_NODE* only = node->children[idx];
+        if (!only) {
+            LOG_MSG("[ART] remove_child16: remaining child is NULL after shift\n");
+            return STATUS_DATA_ERROR;
+        }
+        const UCHAR edge_key = node->keys[idx];
+
+        // Leaf: promote it.
+        if (IS_LEAF(only)) {
+            *ref = only; // publish BEFORE freeing parent
+            ART_NODE* old = (ART_NODE*)node;
+            free_node(&old);
+            return STATUS_SUCCESS;
+        }
+
+        // Internal: merge parent.prefix + edge + child.prefix (logical length may exceed storage).
+        ART_NODE* child = only;
+
+        const USHORT parent_len = node->base.prefix_length;
+        const USHORT child_len = child->prefix_length;
+
+        // Compute logical merged length with USHORT saturation.
+        USHORT merged_logical = u16_add_clamp(u16_add_clamp(parent_len, 1), child_len);
+
+        // Build capped byte buffer (≤ MAX_PREFIX_LENGTH).
+        UCHAR  merged_bytes[MAX_PREFIX_LENGTH];
+        USHORT write = 0;
+
+        const USHORT parent_copy = (USHORT)min((USHORT)MAX_PREFIX_LENGTH, parent_len);
+        for (USHORT i = 0; i < parent_copy && write < (USHORT)MAX_PREFIX_LENGTH; ++i) {
+            merged_bytes[write++] = node->base.prefix[i];
+        }
+        if (write < (USHORT)MAX_PREFIX_LENGTH) {
+            merged_bytes[write++] = edge_key;
+        }
+        const USHORT child_copy = (USHORT)min((USHORT)MAX_PREFIX_LENGTH, child_len);
+        for (USHORT i = 0; i < child_copy && write < (USHORT)MAX_PREFIX_LENGTH; ++i) {
+            merged_bytes[write++] = child->prefix[i];
+        }
+
+        // Commit merged LOGICAL length and capped bytes to child.
+        child->prefix_length = merged_logical;
+
+        const USHORT bytes_to_copy = (USHORT)min(write, (USHORT)MAX_PREFIX_LENGTH);
+        if (bytes_to_copy > 0) {
+            RtlCopyMemory(child->prefix, merged_bytes, bytes_to_copy);
+        }
+        if (bytes_to_copy < (USHORT)MAX_PREFIX_LENGTH) {
+            RtlZeroMemory(child->prefix + bytes_to_copy,
+                (SIZE_T)((USHORT)MAX_PREFIX_LENGTH - bytes_to_copy));
+        }
+
+        // Publish merged child and free this NODE16.
+        *ref = child;
+        ART_NODE* old = (ART_NODE*)node;
+        free_node(&old);
+        return STATUS_SUCCESS;
+    }
+
 #if DEBUG
     if (!(node->base.num_of_child < count_before)) {
         LOG_MSG("[ART] remove_child16: count did not decrease (%u -> %u)\n",
@@ -2284,68 +2476,91 @@ STATIC NTSTATUS remove_child16(_In_ ART_NODE16* node, _Inout_ ART_NODE** ref, _I
     return STATUS_SUCCESS;
 }
 
-STATIC INLINE USHORT u16_add_clamp(USHORT a, USHORT b)
-{
-    ULONG s = (ULONG)a + (ULONG)b;
-    return (USHORT)(s > 0xFFFF ? 0xFFFF : s); // clamp to MAXUSHORT
-}
-
 // Remove the entry at 'remove_slot' in a NODE4.
-// - If slot is NULLSTATUS_NOT_FOUND.
-// - Shift left and clear tail; if count==0: *ref=NULL and free.
-// - If 1 child remains: collapse.
-//   * leaf publish it.
-//   * innermerge parent.prefix + edge + child.prefix
-//             (prefix_length saturates to USHORT; store ≤ MAX_PREFIX_LENGTH bytes).
-STATIC NTSTATUS remove_child4(_Inout_ ART_NODE4* node, _Inout_ ART_NODE** ref, _Inout_ ART_NODE** remove_slot)
+// Contracts:
+// - If any parameter is NULL => STATUS_INVALID_PARAMETER
+// - If node->type != NODE4 => STATUS_INVALID_PARAMETER
+// - If remove_slot is not within children[0..3] => STATUS_INVALID_PARAMETER
+// - If remove_slot index >= num_of_child => STATUS_INVALID_PARAMETER
+// - If mapped slot is NULL => STATUS_NOT_FOUND
+// - On success: left-shift, clear tail, update num_of_child.
+//   * If num_of_child becomes 0: *ref = NULL; free(node)
+//   * If num_of_child becomes 1: collapse:
+//       - if the only child is a leaf: publish leaf via *ref; free(node)
+//       - if the only child is an inner node: merge prefixes; publish child; free(node)
+STATIC NTSTATUS remove_child4(_Inout_ ART_NODE4* node,
+    _Inout_ ART_NODE** ref,
+    _Inout_ ART_NODE** remove_slot)
 {
     if (!node || !ref || !remove_slot) {
-        LOG_MSG("[ART] remove_child4: Invalid parameters\n");
+        LOG_MSG("[ART] remove_child4: invalid parameters\n");
         return STATUS_INVALID_PARAMETER;
     }
     if (node->base.type != NODE4) {
-        LOG_MSG("[ART] remove_child4: Bad node type %d\n", node->base.type);
+        LOG_MSG("[ART] remove_child4: bad node type %u\n", node->base.type);
         return STATUS_INVALID_PARAMETER;
     }
+
 #if DEBUG
+    // In our codebase remove_child4 is always called with *ref pointing to 'node'
     if (*ref != (ART_NODE*)node) {
         LOG_MSG("[ART][BUG] remove_child4: *ref (%p) != node (%p)\n", *ref, node);
         return STATUS_INVALID_PARAMETER;
     }
 #endif
+
+    // Sanity on current count
     if (node->base.num_of_child == 0 || node->base.num_of_child > 4) {
-        LOG_MSG("[ART] remove_child4: Corrupt child count %u\n", node->base.num_of_child);
+        LOG_MSG("[ART] remove_child4: corrupt child count %u\n", node->base.num_of_child);
         return STATUS_DATA_ERROR;
     }
 
-    // Map slot pointer to index
-    SSIZE_T pos64 = (SSIZE_T)(remove_slot - node->children);
-    if (pos64 < 0 || pos64 >= 4) {
-        LOG_MSG("[ART] remove_child4: remove_slot out of bounds\n");
+    // --- Map remove_slot to an index safely and reject out-of-range slots early ---
+    ART_NODE** base = &node->children[0];
+    ART_NODE** end = &node->children[3];
+
+    // remove_slot must fall within the children[] array
+    if (remove_slot < base || remove_slot > end) {
+        LOG_MSG("[ART] remove_child4: remove_slot outside children[]\n");
         return STATUS_INVALID_PARAMETER;
     }
-    USHORT pos = (USHORT)pos64;
 
-    if (node->children[pos] == NULL) {
-        LOG_MSG("[ART] remove_child4: mapped slot is NULL, NOT_FOUND\n");
+    // Compute index only after confirming it is inside the array
+    UCHAR idx = (UCHAR)(remove_slot - base);
+
+    // Reject “slot beyond num_of_child” exactly as the test expects
+    if (idx >= node->base.num_of_child) {
+        LOG_MSG("[ART] remove_child4: slot %u >= count %u\n", idx, node->base.num_of_child);
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    // If the mapped slot is NULL we report NOT_FOUND (nothing to remove)
+    if (node->children[idx] == NULL) {
+        LOG_MSG("[ART] remove_child4: mapped slot is NULL\n");
         return STATUS_NOT_FOUND;
     }
 
-    // Remove + left-shift
-    const USHORT count_before = node->base.num_of_child;
-    if ((USHORT)(pos + 1) < count_before) {
-        const SIZE_T move_elems = (SIZE_T)(count_before - pos - 1);
-        RtlMoveMemory(&node->keys[pos], &node->keys[pos + 1], move_elems * sizeof(UCHAR));
-        RtlMoveMemory(&node->children[pos], &node->children[pos + 1], move_elems * sizeof(ART_NODE*));
+    // --- Remove and left-shift within the used range [0..count-1] ---
+    const UCHAR count_before = (UCHAR)node->base.num_of_child;
+
+    if ((UCHAR)(idx + 1) < count_before) {
+        SIZE_T move_elems = (SIZE_T)(count_before - idx - 1);
+        RtlMoveMemory(&node->keys[idx],
+            &node->keys[idx + 1],
+            move_elems * sizeof(node->keys[0]));
+        RtlMoveMemory(&node->children[idx],
+            &node->children[idx + 1],
+            move_elems * sizeof(node->children[0]));
     }
 
-    // Clear tail
-    const USHORT tail = (USHORT)(count_before - 1);
+    // Clear the now-unused tail cell to avoid stale pointers
+    const UCHAR tail = (UCHAR)(count_before - 1);
     node->keys[tail] = 0;
     node->children[tail] = NULL;
-    node->base.num_of_child = (USHORT)(count_before - 1);
+    node->base.num_of_child = (UCHAR)(count_before - 1);
 
-    // Empty -> free node
+    // --- Handle structural changes ---
+    // 0 children: free the node and clear the parent slot
     if (node->base.num_of_child == 0) {
         *ref = NULL;
         ART_NODE* tmp = (ART_NODE*)node;
@@ -2353,44 +2568,39 @@ STATIC NTSTATUS remove_child4(_Inout_ ART_NODE4* node, _Inout_ ART_NODE** ref, _
         return STATUS_SUCCESS;
     }
 
-    // Collapse on single survivor
+    // 1 child: collapse this NODE4
     if (node->base.num_of_child == 1) {
-        USHORT idx = 0;
-        if (node->children[0] == NULL) {
-            for (USHORT i = 1; i < 4; ++i) {
-                if (node->children[i] != NULL) { idx = i; break; }
-            }
-        }
+        // After shifting, the survivor is at index 0.
+        ART_NODE* only = node->children[0];
+        UCHAR edge_key = node->keys[0];
 
-        ART_NODE* only = node->children[idx];
         if (!only) {
-            LOG_MSG("[ART] remove_child4: remaining child is NULL after shift\n");
+            LOG_MSG("[ART] remove_child4: survivor is NULL\n");
             return STATUS_DATA_ERROR;
         }
-        const UCHAR edge_key = node->keys[idx];
 
-        // If the only survivor is a leaf, promote it and free the NODE4.
+        // Promote leaf directly
         if (IS_LEAF(only)) {
-            *ref = only;
+            *ref = only;               // publish before freeing parent
             ART_NODE* old = (ART_NODE*)node;
             free_node(&old);
             return STATUS_SUCCESS;
         }
 
-        // Merge parent.prefix + edge + child.prefix
+        // Merge parent.prefix + edge_key + child.prefix into the child
         ART_NODE* child = only;
 
-        const USHORT parent_len = node->base.prefix_length;
-        const USHORT child_len = child->prefix_length;
+        USHORT parent_len = node->base.prefix_length;
+        USHORT child_len = child->prefix_length;
 
-        // 1) Compute logical merged length with USHORT saturation (E3 expects clamp to 0xFFFF)
+        // Logical length may exceed MAX_PREFIX_LENGTH; clamp only to USHORT
         USHORT merged_logical = u16_add_clamp(u16_add_clamp(parent_len, 1), child_len);
 
-        // 2) Copy at most MAX_PREFIX_LENGTH bytes (storage cap stays the same)
+        // Build the capped bytes we can store (<= MAX_PREFIX_LENGTH)
         UCHAR  merged_bytes[MAX_PREFIX_LENGTH];
         USHORT write = 0;
 
-        const USHORT parent_copy = (USHORT)min((USHORT)MAX_PREFIX_LENGTH, parent_len);
+        USHORT parent_copy = (USHORT)min((USHORT)MAX_PREFIX_LENGTH, parent_len);
         for (USHORT i = 0; i < parent_copy && write < (USHORT)MAX_PREFIX_LENGTH; ++i) {
             merged_bytes[write++] = node->base.prefix[i];
         }
@@ -2399,16 +2609,14 @@ STATIC NTSTATUS remove_child4(_Inout_ ART_NODE4* node, _Inout_ ART_NODE** ref, _
             merged_bytes[write++] = edge_key;
         }
 
-        const USHORT child_copy = (USHORT)min((USHORT)MAX_PREFIX_LENGTH, child_len);
+        USHORT child_copy = (USHORT)min((USHORT)MAX_PREFIX_LENGTH, child_len);
         for (USHORT i = 0; i < child_copy && write < (USHORT)MAX_PREFIX_LENGTH; ++i) {
             merged_bytes[write++] = child->prefix[i];
         }
 
-        // 3) Store the LOGICAL length (may exceed MAX_PREFIX_LENGTH; must clamp only to USHORT)
+        // Commit merged logical length and bytes
         child->prefix_length = merged_logical;
-
-        // 4) Write the capped bytes and zero the remainder
-        const USHORT bytes_to_copy = (USHORT)min(write, (USHORT)MAX_PREFIX_LENGTH);
+        USHORT bytes_to_copy = (USHORT)min(write, (USHORT)MAX_PREFIX_LENGTH);
         if (bytes_to_copy > 0) {
             RtlCopyMemory(child->prefix, merged_bytes, bytes_to_copy);
         }
@@ -2417,12 +2625,14 @@ STATIC NTSTATUS remove_child4(_Inout_ ART_NODE4* node, _Inout_ ART_NODE** ref, _
                 (SIZE_T)((USHORT)MAX_PREFIX_LENGTH - bytes_to_copy));
         }
 
+        // Publish merged child and free the NODE4
         *ref = child;
         ART_NODE* old = (ART_NODE*)node;
         free_node(&old);
         return STATUS_SUCCESS;
     }
 
+    // 2..4 children remain: nothing else to do
     return STATUS_SUCCESS;
 }
 
@@ -2434,27 +2644,67 @@ STATIC NTSTATUS remove_child(_In_ ART_NODE* node, _Inout_ ART_NODE** ref, _In_ U
 
     switch (node->type) {
     case NODE4: {
-        // For NODE4, caller must pass the exact leaf slot pointer (tests require this).
-        if (!leaf) {
+        // For NODE4, caller must pass the exact child slot pointer (child_slot!=NULL)
+        if (!leaf || !*leaf) {
+            // Exactly-one rule: child_slot is required for NODE4; edge byte 'c' is ignored.
             return STATUS_INVALID_PARAMETER;
         }
+#if DEBUG
+        // Defensive: verify 'leaf' actually belongs to this parent
+        {
+            ART_NODE4* p = (ART_NODE4*)node;
+            BOOLEAN belongs = FALSE;
+            UCHAR cnt = (UCHAR)p->base.num_of_child;
+            for (UCHAR i = 0; i < cnt; ++i) {
+                if (&p->children[i] == leaf) { belongs = TRUE; break; }
+            }
+            if (!belongs) {
+                // Wrong slot passed; fail fast to avoid corrupting the tree
+                return STATUS_NOT_FOUND;
+            }
+        }
+#endif
         ART_NODE4* n4 = (ART_NODE4*)node;
         ART_NODE** slot = leaf;
         return remove_child4(n4, ref, slot);
     }
     case NODE16: {
-        // For NODE16, caller must pass the exact leaf slot pointer (tests require this).
-        if (!leaf) {
+        // For NODE16, caller must pass the exact child slot pointer (child_slot!=NULL)
+        if (!leaf || !*leaf) {
+            // Exactly-one rule: child_slot is required for NODE16; edge byte 'c' is ignored.
             return STATUS_INVALID_PARAMETER;
         }
+#if DEBUG
+        {
+            ART_NODE16* p = (ART_NODE16*)node;
+            BOOLEAN belongs = FALSE;
+            USHORT cnt = (USHORT)p->base.num_of_child;
+            for (USHORT i = 0; i < cnt; ++i) {
+                if (&p->children[i] == leaf) { belongs = TRUE; break; }
+            }
+            if (!belongs) {
+                return STATUS_NOT_FOUND;
+            }
+        }
+#endif
         ART_NODE16* n16 = (ART_NODE16*)node;
         ART_NODE** slot = leaf;
         return remove_child16(n16, ref, slot);
     }
     case NODE48:
+        // For NODE48, exactly-one rule: use edge byte 'c' and require child_slot==NULL
+        if (leaf != NULL) {
+            return STATUS_INVALID_PARAMETER;
+        }
         return remove_child48((ART_NODE48*)node, ref, c);
+
     case NODE256:
+        // For NODE256, exactly-one rule: use edge byte 'c' and require child_slot==NULL
+        if (leaf != NULL) {
+            return STATUS_INVALID_PARAMETER;
+        }
         return remove_child256((ART_NODE256*)node, ref, c);
+
     default:
         return STATUS_INVALID_PARAMETER;
     }
@@ -2463,8 +2713,14 @@ STATIC NTSTATUS remove_child(_In_ ART_NODE* node, _Inout_ ART_NODE** ref, _In_ U
 // Delete a single key (internal routine) using the unified prefix comparator.
 // - Validates long prefixes via representative leaf inside prefix_compare().
 // - Detaches the matching leaf from the parent when found and returns it to caller.
+// - Uses remove_child(...) with the correct argument contract per node type.
 // - Returns NULL when no exact match is found along this path.
-STATIC ART_LEAF* recursive_delete_internal(_In_ ART_NODE* node,_Inout_ ART_NODE** ref,_In_reads_bytes_(key_length) CONST PUCHAR key,_In_ USHORT key_length,_In_ USHORT depth,_In_ USHORT recursion_depth)
+STATIC ART_LEAF* recursive_delete_internal(_In_ ART_NODE* node,
+    _Inout_ ART_NODE** ref,
+    _In_reads_bytes_(key_length) CONST PUCHAR key,
+    _In_ USHORT key_length,
+    _In_ USHORT depth,
+    _In_ USHORT recursion_depth)
 {
     if (recursion_depth >= MAX_RECURSION_DEPTH) {
         LOG_MSG("[ART] Maximum recursion depth exceeded");
@@ -2499,14 +2755,14 @@ STATIC ART_LEAF* recursive_delete_internal(_In_ ART_NODE* node,_Inout_ ART_NODE*
             LOG_MSG("[ART] Depth overflow detected");
             return NULL;
         }
-        depth += node->prefix_length;
+        depth = (USHORT)(depth + node->prefix_length);
     }
 
     // If the key ends exactly at this internal node, try the 0x00 terminator child.
     if (depth == key_length) {
         ART_NODE** term_ref = find_child(node, 0);
         if (!term_ref || !*term_ref) {
-            return NULL; // no terminator edgeno exact match
+            return NULL; // no terminator edge -> no exact match
         }
         if (!IS_LEAF(*term_ref)) {
             LOG_MSG("[ART] Terminator edge is not a leaf");
@@ -2518,7 +2774,16 @@ STATIC ART_LEAF* recursive_delete_internal(_In_ ART_NODE* node,_Inout_ ART_NODE*
             return NULL;
         }
         if (leaf_matches(term_leaf, key, key_length)) {
-            NTSTATUS st = remove_child(node, ref, 0, term_ref);
+            // IMPORTANT: respect remove_child() contract by parent type.
+            NTSTATUS st;
+            if (node->type == NODE4 || node->type == NODE16) {
+                // For NODE4/16 pass the exact child slot; edge byte is ignored.
+                st = remove_child(node, ref, /*edge_byte*/0, /*child_slot*/term_ref);
+            }
+            else {
+                // For NODE48/256 pass the edge byte; child_slot must be NULL.
+                st = remove_child(node, ref, /*edge_byte*/0, /*child_slot*/NULL);
+            }
             if (!NT_SUCCESS(st)) {
                 LOG_MSG("[ART] Failed to remove terminator child, status: 0x%x", st);
                 return NULL;
@@ -2533,7 +2798,8 @@ STATIC ART_LEAF* recursive_delete_internal(_In_ ART_NODE* node,_Inout_ ART_NODE*
         return NULL;
     }
 
-    ART_NODE** child_ref = find_child(node, key[depth]);
+    const UCHAR edge = key[depth];
+    ART_NODE** child_ref = find_child(node, edge);
     if (!child_ref || !*child_ref) {
         return NULL;
     }
@@ -2548,7 +2814,15 @@ STATIC ART_LEAF* recursive_delete_internal(_In_ ART_NODE* node,_Inout_ ART_NODE*
             return NULL;
         }
         if (leaf_matches(leaf, key, key_length)) {
-            NTSTATUS st = remove_child(node, ref, key[depth], child_ref);
+            NTSTATUS st;
+            if (node->type == NODE4 || node->type == NODE16) {
+                // NODE4/16 require the exact child slot pointer (edge ignored).
+                st = remove_child(node, ref, /*edge_byte*/0, /*child_slot*/child_ref);
+            }
+            else {
+                // NODE48/256 remove by edge byte; child_slot must be NULL by contract.
+                st = remove_child(node, ref, /*edge_byte*/edge, /*child_slot*/NULL);
+            }
             if (!NT_SUCCESS(st)) {
                 LOG_MSG("[ART] Failed to remove child, status: 0x%x", st);
                 return NULL;
@@ -2575,7 +2849,11 @@ STATIC ART_LEAF* recursive_delete_internal(_In_ ART_NODE* node,_Inout_ ART_NODE*
 // - 'node'/'ref' may point to a subtree root (not necessarily the global root).
 // - 'key' is the byte sequence to match starting at 'depth' relative to this node.
 // - Returns the removed leaf if an exact match is deleted; otherwise NULL.
-STATIC ART_LEAF* recursive_delete(_In_opt_ ART_NODE* node, _Inout_ ART_NODE** ref, _In_reads_bytes_(key_length) CONST PUCHAR key, _In_ USHORT key_length, _In_ USHORT depth)
+STATIC ART_LEAF* recursive_delete(_In_opt_ ART_NODE* node,
+    _Inout_ ART_NODE** ref,
+    _In_reads_bytes_(key_length) CONST PUCHAR key,
+    _In_ USHORT key_length,
+    _In_ USHORT depth)
 {
     // Guard: basic parameter validation
     if (!node || !ref || !key || key_length == 0) {
@@ -2596,7 +2874,11 @@ ULONG art_delete(_Inout_ ART_TREE* tree, _In_ PCUNICODE_STRING unicode_key)
     if (!tree || !unicode_key) {
         return POLICY_NONE;
     }
-    if (tree->size == 0) {
+
+    // Empty-tree guard must rely on the actual structure, not the size counter.
+    // 'size' is accounting and may be stale/corrupted in tests; a non-NULL root
+    // means there is still something to delete.
+    if (tree->root == NULL) {
         LOG_MSG("[ART] Tree is empty\n");
         return POLICY_NONE;
     }
@@ -2627,6 +2909,7 @@ ULONG art_delete(_Inout_ ART_TREE* tree, _In_ PCUNICODE_STRING unicode_key)
     if (deleted_leaf) {
         old_value = deleted_leaf->value;
 
+        // Saturating decrement: do not underflow if size was already 0.
         if (tree->size > 0) {
             tree->size--;
         }
@@ -2648,7 +2931,11 @@ ULONG art_delete(_Inout_ ART_TREE* tree, _In_ PCUNICODE_STRING unicode_key)
 // Deletes the subtree referenced by *slot and NULLs that slot on success.
 // If recursion depth would overflow, returns STATUS_STACK_OVERFLOW and
 // DOES NOT mutate *slot (so an iterative fallback can reclaim safely).
-STATIC NTSTATUS recursive_delete_all_internal(_Inout_ ART_TREE* tree, _Inout_ ART_NODE** slot, _Inout_ PULONG leaf_count, _Inout_ PULONG node_count, _In_ USHORT recursion_depth)
+STATIC NTSTATUS recursive_delete_all_internal(_Inout_ ART_TREE* tree,
+    _Inout_ ART_NODE** slot,
+    _Inout_ PULONG leaf_count,
+    _Inout_ PULONG node_count,
+    _In_ USHORT recursion_depth)
 {
 #ifdef UNREFERENCED_PARAMETER
     UNREFERENCED_PARAMETER(tree);
@@ -2710,7 +2997,7 @@ STATIC NTSTATUS recursive_delete_all_internal(_Inout_ ART_TREE* tree, _Inout_ AR
             status = recursive_delete_all_internal(tree, child_slot, leaf_count, node_count,
                 (USHORT)(recursion_depth + 1));
             if (!NT_SUCCESS(status)) {
-                return status;                 // child_slot left intact by callee on failure
+                return status; // child_slot left intact by callee on failure
             }
             // On success, callee already NULLed *child_slot.
         }
@@ -2819,7 +3106,7 @@ STATIC NTSTATUS recursive_delete_all_internal(_Inout_ ART_TREE* tree, _Inout_ AR
     return STATUS_SUCCESS;
 }
 
-// --- Fallback: Iterative delete-all traversal to avoid deep recursion ---
+// Fallback: Iterative delete-all traversal to avoid deep recursion
 // This function is used when recursive_delete_all_internal fails due to
 // exceeding MAX_RECURSION_DEPTH (stack overflow risk) or other recursion limits.
 // It performs a post-order traversal using an explicit stack allocated on the heap,
@@ -2830,15 +3117,11 @@ typedef struct _DEL_FRAME {
     USHORT map_i;       // index for scanning NODE48 child_index[256]
     BOOLEAN entered;    // whether we have already visited this node (pre/post traversal state)
 } DEL_FRAME;
-// --- Safe helpers for iterative delete-all ---
 
-STATIC INLINE BOOLEAN is_valid_inner_type(UCHAR t)
-{
-    return (t == NODE4 || t == NODE16 || t == NODE48 || t == NODE256);
-}
+
 
 // Grow the explicit stack buffer when needed.
-STATIC __forceinline NTSTATUS ensure_stack_capacity(DEL_FRAME** pstk, SIZE_T* pcap, SIZE_T sp)
+STATIC INLINE NTSTATUS ensure_stack_capacity(DEL_FRAME** pstk, SIZE_T* pcap, SIZE_T sp)
 {
     if (sp < *pcap) return STATUS_SUCCESS;
 
@@ -2857,7 +3140,19 @@ STATIC __forceinline NTSTATUS ensure_stack_capacity(DEL_FRAME** pstk, SIZE_T* pc
     return STATUS_SUCCESS;
 }
 
-// --- Fallback: Iterative, double-free–safe post-order deletion ---
+#define TRY_GROW_STACK_OR_FAIL()                          \
+    do {                                                  \
+        status = ensure_stack_capacity(&stk, &cap, sp);   \
+        if (!NT_SUCCESS(status)) {                        \
+            goto done;                                    \
+        }                                                 \
+    } while (0)
+
+// Fallback: Iterative, double-free–safe post-order deletion.
+// - Walks the tree without recursion and frees nodes post-order.
+// - Detaches child pointers as it goes to avoid re-visitation.
+// - On success, sets *proot = NULL.
+// - On failure, leaves *proot as-is so the caller can retry or inspect.
 STATIC NTSTATUS force_delete_all_iterative(_Inout_ ULONG* leaf_count, _Inout_ ULONG* node_count, _Inout_ ART_NODE** proot)
 {
     if (!leaf_count || !node_count || !proot || !*proot)
@@ -2913,16 +3208,16 @@ STATIC NTSTATUS force_delete_all_iterative(_Inout_ ULONG* leaf_count, _Inout_ UL
             ART_NODE4* p = (ART_NODE4*)n;
             USHORT max = (USHORT)min(p->base.num_of_child, 4);
             while (fr->i < max) {
-                ART_NODE* ch = p->children[fr->i];
-                p->children[fr->i] = NULL; // detach immediately
-                fr->i++;
+                USHORT cur_i = fr->i++;
+                ART_NODE* ch = p->children[cur_i];
                 if (ch) {
-                    // If inner, validate type before pushing
                     if (!IS_LEAF(ch) && !is_valid_inner_type(((ART_NODE*)ch)->type)) {
-                        continue; // already freed/poisoned — skip
+                        continue; // already poisoned/invalid — skip
                     }
-                    status = ensure_stack_capacity(&stk, &cap, sp);
-                    if (!NT_SUCCESS(status)) goto done;
+                    // Ensure capacity BEFORE detaching child
+                    TRY_GROW_STACK_OR_FAIL();
+                    // Now safe to detach and push
+                    p->children[cur_i] = NULL;
                     stk[sp++] = (DEL_FRAME){ .node = ch, .i = 0, .map_i = 0, .entered = FALSE };
                     pushed = TRUE;
                     break;
@@ -2934,15 +3229,14 @@ STATIC NTSTATUS force_delete_all_iterative(_Inout_ ULONG* leaf_count, _Inout_ UL
             ART_NODE16* p = (ART_NODE16*)n;
             USHORT max = (USHORT)min(p->base.num_of_child, 16);
             while (fr->i < max) {
-                ART_NODE* ch = p->children[fr->i];
-                p->children[fr->i] = NULL;
-                fr->i++;
+                USHORT cur_i = fr->i++;
+                ART_NODE* ch = p->children[cur_i];
                 if (ch) {
                     if (!IS_LEAF(ch) && !is_valid_inner_type(((ART_NODE*)ch)->type)) {
                         continue;
                     }
-                    status = ensure_stack_capacity(&stk, &cap, sp);
-                    if (!NT_SUCCESS(status)) goto done;
+                    TRY_GROW_STACK_OR_FAIL();
+                    p->children[cur_i] = NULL;
                     stk[sp++] = (DEL_FRAME){ .node = ch, .i = 0, .map_i = 0, .entered = FALSE };
                     pushed = TRUE;
                     break;
@@ -2953,38 +3247,54 @@ STATIC NTSTATUS force_delete_all_iterative(_Inout_ ULONG* leaf_count, _Inout_ UL
         case NODE48: {
             ART_NODE48* p = (ART_NODE48*)n;
             while (fr->map_i < 256) {
-                UCHAR map = p->child_index[fr->map_i];
-                p->child_index[fr->map_i] = 0; // detach mapping
-                fr->map_i++;
-                if (map > 0 && map <= 48) {
-                    ART_NODE* ch = p->children[map - 1];
-                    p->children[map - 1] = NULL; // detach slot
-                    if (ch) {
-                        if (!IS_LEAF(ch) && !is_valid_inner_type(((ART_NODE*)ch)->type)) {
-                            continue;
-                        }
-                        status = ensure_stack_capacity(&stk, &cap, sp);
-                        if (!NT_SUCCESS(status)) goto done;
-                        stk[sp++] = (DEL_FRAME){ .node = ch, .i = 0, .map_i = 0, .entered = FALSE };
-                        pushed = TRUE;
-                        break;
-                    }
+                USHORT idxByte = fr->map_i++;
+                UCHAR map = p->child_index[idxByte]; // 1..48 or 0
+                if (map == 0) {
+                    // normalize any garbage to 0 (no child)
+                    p->child_index[idxByte] = 0;
+                    continue;
                 }
+                if (map > 48) {
+                    // bogus map — sanitize
+                    p->child_index[idxByte] = 0;
+                    continue;
+                }
+                ART_NODE* ch = p->children[map - 1];
+                if (!ch) {
+                    // stale map — clear mapping and continue
+                    p->child_index[idxByte] = 0;
+                    continue;
+                }
+                if (!IS_LEAF(ch) && !is_valid_inner_type(((ART_NODE*)ch)->type)) {
+                    // invalid child — clear mapping & slot to sanitize
+                    p->child_index[idxByte] = 0;
+                    p->children[map - 1] = NULL;
+                    continue;
+                }
+                // Grow stack BEFORE detaching
+                TRY_GROW_STACK_OR_FAIL();
+                // Safe to detach
+                p->child_index[idxByte] = 0;
+                p->children[map - 1] = NULL;
+                stk[sp++] = (DEL_FRAME){ .node = ch, .i = 0, .map_i = 0, .entered = FALSE };
+                pushed = TRUE;
+                break;
             }
         } break;
 
         case NODE256: {
             ART_NODE256* p = (ART_NODE256*)n;
             while (fr->i < 256) {
-                ART_NODE* ch = p->children[fr->i];
-                p->children[fr->i] = NULL; // detach slot
-                fr->i++;
+                USHORT ix = fr->i++;
+                ART_NODE* ch = p->children[ix];
                 if (ch) {
                     if (!IS_LEAF(ch) && !is_valid_inner_type(((ART_NODE*)ch)->type)) {
+                        // sanitize
+                        p->children[ix] = NULL;
                         continue;
                     }
-                    status = ensure_stack_capacity(&stk, &cap, sp);
-                    if (!NT_SUCCESS(status)) goto done;
+                    TRY_GROW_STACK_OR_FAIL();
+                    p->children[ix] = NULL;
                     stk[sp++] = (DEL_FRAME){ .node = ch, .i = 0, .map_i = 0, .entered = FALSE };
                     pushed = TRUE;
                     break;
@@ -2993,14 +3303,12 @@ STATIC NTSTATUS force_delete_all_iterative(_Inout_ ULONG* leaf_count, _Inout_ UL
         } break;
 
         default:
-            // Unknown/poison type (should have been caught above). Just drop.
             pushed = FALSE;
             break;
         }
 
         // Post-order free: if no more children to push, free this inner node.
         if (!pushed) {
-            // Re-validate before freeing (node might have been poisoned by other paths)
             if (is_valid_inner_type(n->type)) {
                 free_node(&n);
                 (*node_count)++;
@@ -3017,57 +3325,202 @@ done:
     return status;
 }
 
-// Deletes the entire subtree whose path matches 'unicode_key' as a prefix.
+// Returns TRUE if there exists a downward path longer than `limit` edges+prefix bytes.
+// Non-recursive, bounded work; safe in kernel.
+STATIC BOOLEAN probe_deeper_than(_In_opt_ ART_NODE* n, _In_ USHORT limit)
+{
+    if (!n) return FALSE;
+
+    USHORT depth = 0;
+    while (n && !IS_LEAF(n)) {
+        // Account for compressed prefix length
+        if ((USHORT)(depth + n->prefix_length) < depth) return TRUE; // overflow => deeper
+        depth = (USHORT)(depth + n->prefix_length);
+        if (depth > limit) return TRUE;
+
+        // Follow the first existing child (any will do for a lower bound)
+        switch (n->type) {
+        case NODE4: {
+            ART_NODE4* p = (ART_NODE4*)n;
+            ART_NODE* ch = NULL;
+            for (UCHAR i = 0; i < p->base.num_of_child && i < 4; ++i) {
+                if ((ch = p->children[i]) != NULL) break;
+            }
+            if (!ch) return FALSE;
+            n = ch; depth++;
+        } break;
+        case NODE16: {
+            ART_NODE16* p = (ART_NODE16*)n;
+            ART_NODE* ch = NULL;
+            for (UCHAR i = 0; i < p->base.num_of_child && i < 16; ++i) {
+                if ((ch = p->children[i]) != NULL) break;
+            }
+            if (!ch) return FALSE;
+            n = ch; depth++;
+        } break;
+        case NODE48: {
+            ART_NODE48* p = (ART_NODE48*)n;
+            ART_NODE* ch = NULL;
+            for (USHORT i = 0; i < 256; ++i) {
+                UCHAR m = p->child_index[i];
+                if (m) { ch = p->children[(USHORT)(m - 1)]; if (ch) break; }
+            }
+            if (!ch) return FALSE;
+            n = ch; depth++;
+        } break;
+        case NODE256: {
+            ART_NODE256* p = (ART_NODE256*)n;
+            ART_NODE* ch = NULL;
+            for (USHORT i = 0; i < 256; ++i) {
+                if ((ch = p->children[i]) != NULL) break;
+            }
+            if (!ch) return FALSE;
+            n = ch; depth++;
+        } break;
+        default:
+            return FALSE;
+        }
+
+        if (depth > limit) return TRUE;
+    }
+    return FALSE;
+}
+
+// Helper: compact/collapse a NODE4 after one child was detached but *ref
+// still points at the NODE4 (publish survivor or NULL as needed).
+static VOID collapse_node4_if_needed(_Inout_ ART_NODE4* n4, _Inout_ ART_NODE** ref)
+{
+    if (!n4 || !ref) return;
+
+    // Compact keys/children left-aligned (remove NULL holes, preserve order).
+    UCHAR in_cnt = (UCHAR)min(n4->base.num_of_child, 4);
+    UCHAR out_cnt = 0;
+    for (UCHAR i = 0; i < in_cnt; ++i) {
+        ART_NODE* ch = n4->children[i];
+        if (!ch) continue;
+        if (out_cnt != i) {
+            n4->keys[out_cnt] = n4->keys[i];
+            n4->children[out_cnt] = ch;
+            n4->keys[i] = 0;
+            n4->children[i] = NULL;
+        }
+        out_cnt++;
+    }
+    n4->base.num_of_child = out_cnt;
+
+    if (out_cnt == 0) {
+        // No survivors -> publish NULL and free node.
+        *ref = NULL;
+        ART_NODE* old = (ART_NODE*)n4;
+        free_node(&old);
+        return;
+    }
+
+    if (out_cnt == 1) {
+        // Single survivor -> collapse/merge just like remove_child4 does.
+        ART_NODE* only = n4->children[0];
+        UCHAR     edge_b = n4->keys[0];
+
+        if (IS_LEAF(only)) {
+            *ref = only; // publish encoded leaf
+            ART_NODE* old = (ART_NODE*)n4;
+            free_node(&old);
+            return;
+        }
+
+        // Merge parent.prefix + edge + child.prefix (length clamps to USHORT;
+        // stored bytes capped to MAX_PREFIX_LENGTH).
+        ART_NODE* child = only;
+
+        const USHORT parent_len = n4->base.prefix_length;
+        const USHORT child_len = child->prefix_length;
+
+        USHORT merged_logical = u16_add_clamp(u16_add_clamp(parent_len, 1), child_len);
+
+        UCHAR  buf[MAX_PREFIX_LENGTH];
+        USHORT w = 0;
+
+        USHORT pc = (USHORT)min((USHORT)MAX_PREFIX_LENGTH, parent_len);
+        for (USHORT i = 0; i < pc && w < (USHORT)MAX_PREFIX_LENGTH; ++i) buf[w++] = n4->base.prefix[i];
+
+        if (w < (USHORT)MAX_PREFIX_LENGTH) buf[w++] = edge_b;
+
+        USHORT cc = (USHORT)min((USHORT)MAX_PREFIX_LENGTH, child_len);
+        for (USHORT i = 0; i < cc && w < (USHORT)MAX_PREFIX_LENGTH; ++i) buf[w++] = child->prefix[i];
+
+        child->prefix_length = merged_logical;
+        if (w) RtlCopyMemory(child->prefix, buf, w);
+        if (w < (USHORT)MAX_PREFIX_LENGTH) {
+            RtlZeroMemory(child->prefix + w, (SIZE_T)((USHORT)MAX_PREFIX_LENGTH - w));
+        }
+
+        *ref = child;
+        ART_NODE* old = (ART_NODE*)n4;
+        free_node(&old);
+    }
+    // else: >1 survivors, keep NODE4 as-is (already compacted).
+}
+
 NTSTATUS art_delete_subtree(_Inout_ ART_TREE* tree, _In_ PCUNICODE_STRING unicode_key)
 {
-    if (!tree || !unicode_key)
+    if (!tree || !unicode_key) return STATUS_INVALID_PARAMETER;
+
+    // Empty unicode key is rejected.
+    if (unicode_key->Length == 0 || !unicode_key->Buffer ||
+        (unicode_key->MaximumLength >= sizeof(WCHAR) && unicode_key->Buffer[0] == L'\0'))
         return STATUS_INVALID_PARAMETER;
 
-    // Reject empty Unicode prefix to avoid nuking the whole tree by mistake.
-    if (unicode_key->Length == 0)
+#if defined(MAX_KEY_LENGTH)
+    // Fast pre-check for ASCII-ish oversize (tests rely on this path).
+    if ((unicode_key->Length / sizeof(WCHAR)) > MAX_KEY_LENGTH)
         return STATUS_INVALID_PARAMETER;
+#endif
 
-    if (tree->size == 0) {
+    if (!tree->root || tree->size == 0) {
         LOG_MSG("[ART] Tree is empty");
         return STATUS_NOT_FOUND;
     }
 
     USHORT prefix_len = 0;
     PUCHAR prefix = unicode_to_utf8(unicode_key, &prefix_len);
-    if (!prefix)
-        return STATUS_INSUFFICIENT_RESOURCES;
+    if (!prefix) return STATUS_INSUFFICIENT_RESOURCES;
 
-    if (prefix_len == 0) {
+    // Post-conversion symmetry guard.
+    if (prefix_len == 0
+#if defined(MAX_KEY_LENGTH)
+        || prefix_len > MAX_KEY_LENGTH
+#endif
+        ) {
         destroy_utf8_key(prefix);
         return STATUS_INVALID_PARAMETER;
     }
 
-    ART_NODE** node_ref = &tree->root; // address of current node pointer (slot in parent)
+    ART_NODE** node_ref = &tree->root; // slot holding `node`
     ART_NODE* node = tree->root;
     ART_NODE* parent = NULL;
-    ART_NODE** parent_ref = NULL;
+    ART_NODE** parent_ref = NULL;        // slot holding `parent`
     USHORT     depth = 0;
     UCHAR      last_key = 0;
 
     while (node && !IS_LEAF(node)) {
-        // --- Validate/comsume compressed prefix (supports partial match inside prefix) ---
+        // ----- compressed prefix handling -----
         if (node->prefix_length > 0) {
+            if (depth > prefix_len) { destroy_utf8_key(prefix); return STATUS_NOT_FOUND; }
+
             USHORT matched = 0;
             BOOLEAN ok = prefix_compare(node, prefix, prefix_len, depth, NULL, &matched);
             const USHORT remaining = (USHORT)(prefix_len - depth);
 
             if (!ok) {
-                // Accept the case where our search prefix ends inside this node's logical prefix.
                 if (matched == remaining) {
-                    depth = prefix_len; // we've consumed the entire search prefix here
+                    depth = prefix_len; // prefix ends inside node->prefix
                 }
                 else {
                     destroy_utf8_key(prefix);
-                    return STATUS_NOT_FOUND; // true mismatch
+                    return STATUS_NOT_FOUND;
                 }
             }
             else {
-                // Full logical prefix validated (including long-prefix parts).
                 if ((USHORT)(depth + node->prefix_length) < depth) {
                     destroy_utf8_key(prefix);
                     return STATUS_INTEGER_OVERFLOW;
@@ -3076,97 +3529,76 @@ NTSTATUS art_delete_subtree(_Inout_ ART_TREE* tree, _In_ PCUNICODE_STRING unicod
             }
         }
 
-        // If we consumed exactly 'prefix_len', 'node' is the subtree root to delete.
+        // Found the subtree root to delete
         if (depth == prefix_len) {
             ART_NODE* to_free = node;
-            NTSTATUS st;
 
-            // Detach from parent (if any)
-            if (parent && parent_ref) {
+            // Detach from parent BEFORE freeing the subtree.
+            if (parent) {
+                NTSTATUS st;
                 if (parent->type == NODE4 || parent->type == NODE16) {
-                    // For NODE4/16 remove_child requires the exact child slot address.
-                    st = remove_child(parent, parent_ref, 0, node_ref);
+                    st = remove_child(parent, parent_ref, 0, /*slot*/node_ref);
                 }
                 else {
-                    // For NODE48/256 remove_child needs the edge byte.
-                    st = remove_child(parent, parent_ref, last_key, NULL);
+                    st = remove_child(parent, parent_ref, /*edge*/last_key, /*slot*/NULL);
                 }
-                if (!NT_SUCCESS(st)) {
-                    destroy_utf8_key(prefix);
-                    return st;
-                }
+                if (!NT_SUCCESS(st)) { destroy_utf8_key(prefix); return st; }
             }
             else {
-                // Matched at the root.
-                *node_ref = NULL; // node_ref == &tree->root
-                tree->root = NULL;
+                // Deleting from the real root
+                *node_ref = NULL;
             }
 
-            // Subtree detached — free it (recursive, with iterative fallback).
-            ULONG leaves = 0, nodes = 0;
-            NTSTATUS st2 = recursive_delete_all_internal(tree, &to_free, &leaves, &nodes, 0);
-            if (!NT_SUCCESS(st2)) {
-                ULONG forced_leaves = 0, forced_nodes = 0;
-                NTSTATUS st3 = force_delete_all_iterative(&forced_leaves, &forced_nodes, &to_free);
-                if (!NT_SUCCESS(st3)) {
-                    LOG_MSG("[ART] Warning: Iterative cleanup failed with status 0x%X", st3);
-                    destroy_utf8_key(prefix);
-                    return st3;
-                }
-                // Adjust size by actual number of freed leaves.
-                tree->size = (tree->size >= forced_leaves) ? (tree->size - forced_leaves) : 0;
+            // ---- SAFE deletion path: iterative first ----
+            ULONG freed_leaves = 0, freed_nodes = 0;
+            NTSTATUS del = force_delete_all_iterative(&freed_leaves, &freed_nodes, &to_free);
+            if (!NT_SUCCESS(del)) {
+                // As a last resort, try recursive (should be rare now)
+                ULONG rl = 0, rn = 0;
+                del = recursive_delete_all_internal(tree, &to_free, &rl, &rn, 0);
+                if (NT_SUCCESS(del)) freed_leaves = rl;
             }
-            else {
-                tree->size = (tree->size >= leaves) ? (tree->size - leaves) : 0;
-            }
+            if (!NT_SUCCESS(del)) { destroy_utf8_key(prefix); return del; }
+
+            // Saturating size adjust
+            tree->size = (tree->size >= freed_leaves) ? (tree->size - freed_leaves) : 0;
 
             destroy_utf8_key(prefix);
             return STATUS_SUCCESS;
         }
 
-        // Not done yet; follow next edge byte along the prefix path.
-        if (depth >= prefix_len) { // safety (shouldn't hit due to check above)
-            destroy_utf8_key(prefix);
-            return STATUS_NOT_FOUND;
-        }
+        // Not done yet; walk to next child along the prefix bytes.
+        if (depth >= prefix_len) { destroy_utf8_key(prefix); return STATUS_NOT_FOUND; }
 
         last_key = prefix[depth];
         ART_NODE** child = find_child(node, last_key);
-        if (!child || !*child) {
-            destroy_utf8_key(prefix);
-            return STATUS_NOT_FOUND;
-        }
+        if (!child || !*child) { destroy_utf8_key(prefix); return STATUS_NOT_FOUND; }
 
-        // Advance traversal state
         parent = node;
-        parent_ref = node_ref; // slot that points to 'parent' in its parent (or &root)
-        node_ref = child;    // slot that points to the child within 'parent'
+        parent_ref = node_ref;   // slot that holds `parent`
+        node_ref = child;      // slot inside `parent` that holds child
         node = *child;
-        depth++;               // consumed one edge byte
+        depth++;
     }
 
-    // Leaf case: delete the single key if it equals the prefix.
+    // Leaf case: delete exact leaf if it matches the prefix.
     if (node && IS_LEAF(node)) {
         ART_LEAF* leaf = LEAF_RAW(node);
-        if (!leaf) {
-            destroy_utf8_key(prefix);
-            return STATUS_DATA_ERROR;
-        }
+        if (!leaf) { destroy_utf8_key(prefix); return STATUS_DATA_ERROR; }
+
         if (leaf_matches(leaf, prefix, prefix_len)) {
-            NTSTATUS st;
-            if (parent && parent_ref) {
-                if (parent->type == NODE4 || parent->type == NODE16)
-                    st = remove_child(parent, parent_ref, 0, node_ref);
-                else
-                    st = remove_child(parent, parent_ref, last_key, NULL);
-                if (!NT_SUCCESS(st)) {
-                    destroy_utf8_key(prefix);
-                    return st;
+            if (parent) {
+                NTSTATUS st;
+                if (parent->type == NODE4 || parent->type == NODE16) {
+                    st = remove_child(parent, parent_ref, 0, /*slot*/node_ref);
                 }
+                else {
+                    st = remove_child(parent, parent_ref, /*edge*/last_key, /*slot*/NULL);
+                }
+                if (!NT_SUCCESS(st)) { destroy_utf8_key(prefix); return st; }
             }
             else {
-                // Leaf was the root.
-                tree->root = NULL;
+                *node_ref = NULL; // leaf was the root
             }
 
             free_leaf(&leaf);
@@ -3176,39 +3608,66 @@ NTSTATUS art_delete_subtree(_Inout_ ART_TREE* tree, _In_ PCUNICODE_STRING unicod
         }
     }
 
-    // No subtree matched the given prefix.
     destroy_utf8_key(prefix);
     return STATUS_NOT_FOUND;
 }
 
-NTSTATUS art_destroy_tree(_Inout_ ART_TREE* tree) {
+// Destroys the entire ART tree.
+// Behavior required by tests:
+// - Try recursive deletion first.
+// - If it fails (e.g., stack overflow), run iterative fallback.
+// - Regardless of success/failure, clear tree state (root=NULL, size=0).
+// - Return the original recursive status (propagate failure) unless the fallback itself fails,
+//   in which case return the fallback's failure. (State is still cleared in all cases.)
+NTSTATUS art_destroy_tree(_Inout_ ART_TREE* tree)
+{
     if (!tree) {
         return STATUS_INVALID_PARAMETER;
     }
 
     if (!tree->root) {
+        // Idempotent: already empty
         tree->size = 0;
         return STATUS_SUCCESS;
     }
 
     ULONG leaf_count = 0, node_count = 0;
-
-    // NOTE: pass the address of the root (double pointer)
-    NTSTATUS st = recursive_delete_all_internal(tree,&tree->root,&leaf_count,&node_count,0);
-
     ULONG forced_leaves = 0, forced_nodes = 0;
-    NTSTATUS rc = st;
 
-    if (!NT_SUCCESS(st)) {
-        // Fallback is already slot-based, keep passing &tree->root
+    NTSTATUS st = STATUS_SUCCESS;
+    NTSTATUS rc = STATUS_SUCCESS;
+
+    // --- Critical safety: if recursion would overflow, don't even start it.
+    // This prevents a partially-freed tree that the iterative fallback might
+    // dereference (which is what can lead to the BSOD you saw).
+    if (probe_deeper_than(tree->root, MAX_RECURSION_DEPTH)) {
+        st = STATUS_STACK_OVERFLOW;   // what we must propagate
+        rc = st;
+
         NTSTATUS st2 = force_delete_all_iterative(&forced_leaves, &forced_nodes, &tree->root);
         if (!NT_SUCCESS(st2)) {
-            rc = st2;
+            rc = st2; // fallback failure takes precedence
             LOG_MSG("[ART] Warning: Iterative cleanup failed with status 0x%X\n", st2);
         }
     }
+    else {
+        // Safe to attempt recursive delete directly on &tree->root.
+        st = recursive_delete_all_internal(tree, &tree->root, &leaf_count, &node_count, 0);
+        rc = st;
 
-    // In all cases, consider the tree torn down.
+        if (!NT_SUCCESS(st)) {
+            // Recursive attempt failed (not a depth overflow we pre-probed).
+            // Now run the iterative fallback on whatever remains.
+            NTSTATUS st2 = force_delete_all_iterative(&forced_leaves, &forced_nodes, &tree->root);
+            if (!NT_SUCCESS(st2)) {
+                rc = st2; // fallback failure takes precedence
+                LOG_MSG("[ART] Warning: Iterative cleanup failed with status 0x%X\n", st2);
+            }
+            // If fallback succeeded, rc remains the original recursive failure (per contract).
+        }
+    }
+
+    // In all cases, consider the tree torn down (clear state unconditionally).
     tree->size = 0;
     tree->root = NULL;
 
@@ -3222,95 +3681,62 @@ NTSTATUS art_destroy_tree(_Inout_ ART_TREE* tree) {
 /** SEARCH Functions */
 ULONG art_search(_In_ CONST ART_TREE* tree, _In_ PCUNICODE_STRING unicode_key)
 {
-    if (!tree || !unicode_key) {
-        return POLICY_NONE;
-    }
-
-    if (!tree->root || tree->size == 0) {
-        LOG_MSG("[ART] Search on empty tree\n");
-        return POLICY_NONE;
-    }
+    if (!tree || !unicode_key) return POLICY_NONE;
+    if (!tree->root || tree->size == 0) { LOG_MSG("[ART] Search on empty tree"); return POLICY_NONE; }
 
     USHORT key_length = 0;
     PUCHAR key = unicode_to_utf8(unicode_key, &key_length);
-    if (!key) {
-        LOG_MSG("[ART] Failed to convert Unicode key\n");
-        return POLICY_NONE;
-    }
-
-    if (key_length == 0) {
-        LOG_MSG("[ART] Empty key after conversion\n");
-        destroy_utf8_key(key);
-        return POLICY_NONE;
-    }
-
+    if (!key) { LOG_MSG("[ART] Failed to convert Unicode key"); return POLICY_NONE; }
+    if (key_length == 0) { destroy_utf8_key(key); return POLICY_NONE; }
 #if defined(MAX_KEY_LENGTH)
-    if (key_length > MAX_KEY_LENGTH) {                // defensive: symmetry with insert/delete
-        LOG_MSG("[ART] Key length %u exceeds MAX_KEY_LENGTH %u\n", key_length, MAX_KEY_LENGTH);
-        destroy_utf8_key(key);
-        return POLICY_NONE;
-    }
+    if (key_length > MAX_KEY_LENGTH) { destroy_utf8_key(key); return POLICY_NONE; }
 #endif
 
-    ULONG access_right = POLICY_NONE;
+    ULONG     result = POLICY_NONE;
     ART_NODE* node = tree->root;
-    USHORT depth = 0;
-    USHORT search_depth = 0;
+    USHORT    depth = 0, steps = 0;
 
-    while (node && search_depth < MAX_RECURSION_DEPTH) {
-        search_depth++;
+    while (node && steps < MAX_RECURSION_DEPTH) {
+        steps++;
 
-        // Leaf fast-path
         if (IS_LEAF(node)) {
             ART_LEAF* leaf = LEAF_RAW(node);
-            if (leaf && leaf_matches(leaf, key, key_length)) {
-                access_right = leaf->value;
-            }
+            if (leaf && leaf_matches(leaf, key, key_length)) result = leaf->value;
             break;
         }
 
-        // Compare compressed prefix (long-prefix handled inside prefix_compare)
         if (node->prefix_length > 0) {
-            if (depth >= key_length) break;
-
+            if (depth > key_length) break;
             USHORT matched = 0;
-            if (!prefix_compare(node, key, key_length, depth, NULL, &matched)) {
-                // mismatch or key shorter than full logical prefix
-                break;
-            }
-
-            if ((USHORT)(depth + node->prefix_length) < depth) {
-                // overflow guard
-                break;
-            }
-            depth += node->prefix_length;
+            if (!prefix_compare(node, key, key_length, depth, NULL, &matched)) break;
+            if ((USHORT)(depth + node->prefix_length) < depth) break;
+            depth = (USHORT)(depth + node->prefix_length);
         }
 
-        // If key ends at this node, look for terminator edge (0x00) leaf
         if (depth == key_length) {
-            ART_NODE** term = find_child(node, 0);
-            if (term && *term && IS_LEAF(*term)) {
-                ART_LEAF* tleaf = LEAF_RAW(*term);
-                if (tleaf && leaf_matches(tleaf, key, key_length)) {
-                    access_right = tleaf->value;
-                }
+            ART_NODE** tslot = find_child(node, 0);
+            if (tslot && *tslot && IS_LEAF(*tslot)) {
+                ART_LEAF* tleaf = LEAF_RAW(*tslot);
+                if (tleaf && leaf_matches(tleaf, key, key_length)) result = tleaf->value;
             }
             break;
         }
 
-        // Descend via next edge byte
-        ART_NODE** child = find_child(node, key[depth]);
-        if (!child || !*child) break;
+        ART_NODE** child_slot = find_child(node, key[depth]);
+        if (!child_slot || !*child_slot) break;
 
-        node = *child;
+        node = *child_slot;
         depth++;
     }
 
+    if (steps >= MAX_RECURSION_DEPTH)
+        LOG_MSG("[ART] Search aborted due to depth guard");
+
     destroy_utf8_key(key);
-    return access_right;
+    return result;
 }
 
-#if DEBUG
+#if UNIT_TEST
 static BOOLEAN verify_node(const ART_NODE* n, BOOLEAN deep) {
     if (!n) return TRUE;
 
@@ -3377,4 +3803,3 @@ static BOOLEAN verify_node(const ART_NODE* n, BOOLEAN deep) {
     return TRUE;
 }
 #endif
-

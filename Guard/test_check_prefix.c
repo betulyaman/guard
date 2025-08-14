@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // Function under test
 STATIC USHORT check_prefix(_In_ CONST ART_NODE* node,
@@ -454,3 +456,5 @@ NTSTATUS run_all_check_prefix_tests()
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

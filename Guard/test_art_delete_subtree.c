@@ -1,4 +1,6 @@
-﻿// Deletes the entire subtree whose path matches 'unicode_key' as a prefix.
+﻿#if UNIT_TEST
+
+// Deletes the entire subtree whose path matches 'unicode_key' as a prefix.
 #include "test_art.h"
 
 // SUT
@@ -576,6 +578,205 @@ BOOLEAN test_ads_fallback_on_overflow_success()
 }
 
 // ===============================
+// EXTRA TESTS for art_delete_subtree
+// ===============================
+
+BOOLEAN test_ads_long_prefix_partial_root_delete()
+{
+    TEST_START("art_delete_subtree[EX]: long prefix partial match at ROOT -> delete whole subtree");
+
+    // Root NODE4 with a LONG logical prefix "abc" (prefix_length=3),
+    // then a single child 'x' -> leaf. We'll request prefix "ab" so that
+    // the search prefix ENDS INSIDE the node's logical prefix.
+    ART_NODE4* root = ds_make_n4();
+    TEST_ASSERT(root != NULL, "EX1-pre: root allocated");
+
+    root->base.prefix_length = 3;
+    root->base.prefix[0] = 'a';
+    root->base.prefix[1] = 'b';
+    root->base.prefix[2] = 'c';
+
+    UCHAR edge = 'x';
+    UCHAR lv = 0x7A;
+    ART_LEAF* lf = make_leaf(&lv, 1, 0xDEAD);
+    TEST_ASSERT(lf != NULL, "EX1-pre: tail leaf");
+
+    ART_NODE* ch = (ART_NODE*)SET_LEAF(lf);
+    TEST_ASSERT(ds_n4_set(root, &edge, 1, &ch), "EX1-pre: child wired");
+
+    ART_TREE t; ds_zero(&t, sizeof(t));
+    t.root = (ART_NODE*)root;
+    t.size = 1;
+
+    // Prefix "ab" (shorter than root->prefix_length==3) must delete WHOLE subtree.
+    WCHAR wkey_buf[] = L"ab";
+    UNICODE_STRING ukey; create_unicode_string(&ukey, wkey_buf, STRW_LITERAL_LEN(wkey_buf));
+
+    NTSTATUS st = art_delete_subtree(&t, &ukey);
+    TEST_ASSERT(NT_SUCCESS(st), "EX1.1: success");
+    TEST_ASSERT(t.root == NULL, "EX1.2: root cleared");
+    TEST_ASSERT(t.size == 0, "EX1.3: size decremented to 0");
+
+    cleanup_unicode_string(&ukey);
+    // lf freed by SUT
+    TEST_END("art_delete_subtree[EX]: long prefix partial match at ROOT -> delete whole subtree");
+    return TRUE;
+}
+
+BOOLEAN test_ads_delete_internal_subtree_node16_parent()
+{
+    TEST_START("art_delete_subtree[EX]: delete subtree under NODE16 parent");
+
+    // Root NODE16 with:
+    //  - key 'a' -> NODE4 with one leaf
+    //  - key 'q' -> single leaf
+    ART_NODE16* root = ds_make_n16();
+    TEST_ASSERT(root != NULL, "EX2-pre: root NODE16");
+
+    // Subtree @ 'a'
+    ART_NODE4* a_sub = ds_make_n4();
+    TEST_ASSERT(a_sub != NULL, "EX2-pre: a_sub NODE4");
+
+    UCHAR inner_k = 5;
+    ART_LEAF* inner_leaf = make_leaf(&inner_k, 1, 0xA5);
+    TEST_ASSERT(inner_leaf != NULL, "EX2-pre: inner leaf");
+
+    ART_NODE* inner_child = (ART_NODE*)SET_LEAF(inner_leaf);
+    TEST_ASSERT(ds_n4_set(a_sub, &inner_k, 1, &inner_child), "EX2-pre: a_sub wired");
+
+    // Sibling @ 'q' (to keep root after deletion)
+    UCHAR q_ix = 'q';
+    ART_LEAF* q_leaf = make_leaf(&q_ix, 1, 0xB1);
+    TEST_ASSERT(q_leaf != NULL, "EX2-pre: q leaf");
+
+    UCHAR keys[2] = { 'a', 'q' };
+    ART_NODE* kids[2] = { (ART_NODE*)a_sub, (ART_NODE*)SET_LEAF(q_leaf) };
+    TEST_ASSERT(ds_n16_set(root, keys, 2, kids), "EX2-pre: root16 wired");
+
+    ART_TREE t; ds_zero(&t, sizeof(t));
+    t.root = (ART_NODE*)root;
+    t.size = 2;
+
+    // Delete prefix "a" -> should remove 1 key; 'q' remains
+    WCHAR wkey_buf[] = L"a";
+    UNICODE_STRING ukey; create_unicode_string(&ukey, wkey_buf, STRW_LITERAL_LEN(wkey_buf));
+
+    NTSTATUS st = art_delete_subtree(&t, &ukey);
+    TEST_ASSERT(NT_SUCCESS(st), "EX2.1: success");
+    TEST_ASSERT(t.root != NULL, "EX2.2: root still present");
+    TEST_ASSERT(t.size == 1, "EX2.3: size decremented exactly by 1");
+
+    // Cleanup remaining
+    if (t.root) {
+        ULONG dl = 0, dn = 0;
+        (void)recursive_delete_all_internal(&t, &t.root, &dl, &dn, 0);
+        t.root = NULL; t.size = 0;
+    }
+    cleanup_unicode_string(&ukey);
+
+    TEST_END("art_delete_subtree[EX]: delete subtree under NODE16 parent");
+    return TRUE;
+}
+
+BOOLEAN test_ads_delete_internal_subtree_node48_parent()
+{
+    TEST_START("art_delete_subtree[EX]: delete subtree under NODE48 parent");
+
+    // Build root NODE4 with two children:
+    //  - 'a' -> NODE48 subtree with 2 leaves
+    //  - 'z' -> single leaf
+    ART_NODE4* root = ds_make_n4();
+    TEST_ASSERT(root != NULL, "EX3-pre: root NODE4");
+
+    ART_NODE48* sub48 = ds_make_n48();
+    TEST_ASSERT(sub48 != NULL, "EX3-pre: sub48 NODE48");
+
+    UCHAR map_keys[2] = { 7, 200 };
+    ART_LEAF* l0 = make_leaf(&map_keys[0], 1, 0x01);
+    ART_LEAF* l1 = make_leaf(&map_keys[1], 1, 0x02);
+    TEST_ASSERT(l0 && l1, "EX3-pre: leaves for sub48");
+
+    ART_NODE* s48kids[2] = { (ART_NODE*)SET_LEAF(l0), (ART_NODE*)SET_LEAF(l1) };
+    TEST_ASSERT(ds_n48_map(sub48, map_keys, 2, s48kids), "EX3-pre: sub48 mapped");
+
+    UCHAR zc = 'z';
+    ART_LEAF* lz = make_leaf(&zc, 1, 0x99);
+    TEST_ASSERT(lz != NULL, "EX3-pre: leaf z");
+
+    UCHAR root_keys[2] = { 'a', 'z' };
+    ART_NODE* root_ch[2] = { (ART_NODE*)sub48, (ART_NODE*)SET_LEAF(lz) };
+    TEST_ASSERT(ds_n4_set(root, root_keys, 2, root_ch), "EX3-pre: root wired");
+
+    ART_TREE t; ds_zero(&t, sizeof(t));
+    t.root = (ART_NODE*)root;
+    t.size = 3;
+
+    // Delete prefix "a" -> remove the NODE48 subtree (2 leaves), 'z' remains
+    WCHAR wkey_buf[] = L"a";
+    UNICODE_STRING ukey; create_unicode_string(&ukey, wkey_buf, STRW_LITERAL_LEN(wkey_buf));
+
+    NTSTATUS st = art_delete_subtree(&t, &ukey);
+    TEST_ASSERT(NT_SUCCESS(st), "EX3.1: success");
+    TEST_ASSERT(t.root != NULL, "EX3.2: root still present");
+    TEST_ASSERT(t.size == 1, "EX3.3: size==1 (only 'z')");
+
+    // Cleanup remaining
+    if (t.root) {
+        ULONG dl = 0, dn = 0;
+        (void)recursive_delete_all_internal(&t, &t.root, &dl, &dn, 0);
+        t.root = NULL; t.size = 0;
+    }
+    cleanup_unicode_string(&ukey);
+
+    TEST_END("art_delete_subtree[EX]: delete subtree under NODE48 parent");
+    return TRUE;
+}
+
+BOOLEAN test_ads_oversize_prefix_rejected()
+{
+    TEST_START("art_delete_subtree[EX]: oversize prefix rejected, tree unchanged");
+
+    // Build tiny tree so we can assert no mutation happens on reject.
+    ART_NODE4* root = ds_make_n4();
+    TEST_ASSERT(root != NULL, "EX4-pre: root NODE4");
+
+    UCHAR k = 'a';
+    ART_LEAF* lf = make_leaf(&k, 1, 0xAB);
+    TEST_ASSERT(lf != NULL, "EX4-pre: leaf allocated");
+    ART_NODE* ch = (ART_NODE*)SET_LEAF(lf);
+    TEST_ASSERT(ds_n4_set(root, &k, 1, &ch), "EX4-pre: root wired");
+
+    ART_TREE t; ds_zero(&t, sizeof(t));
+    t.root = (ART_NODE*)root;
+    t.size = 1;
+
+    // Create a Unicode prefix of length (MAX_KEY_LENGTH + 1) ASCII 'a's.
+    USHORT wchar_len = (USHORT)(MAX_KEY_LENGTH + 1);
+    SIZE_T bytes = (SIZE_T)wchar_len * sizeof(WCHAR);
+    PWCHAR wbuf = (PWCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, bytes, ART_TAG);
+    TEST_ASSERT(wbuf != NULL, "EX4-pre: wide buffer allocated");
+    for (USHORT i = 0; i < wchar_len; ++i) wbuf[i] = L'a';
+
+    UNICODE_STRING ukey;
+    ukey.Buffer = wbuf;
+    ukey.Length = (USHORT)bytes;
+    ukey.MaximumLength = (USHORT)bytes;
+
+    NTSTATUS st = art_delete_subtree(&t, &ukey);
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "EX4.1: oversize -> STATUS_INVALID_PARAMETER");
+    TEST_ASSERT(t.root != NULL, "EX4.2: root unchanged");
+    TEST_ASSERT(t.size == 1, "EX4.3: size unchanged");
+
+    // Cleanup
+    ULONG dl = 0, dn = 0;
+    (void)recursive_delete_all_internal(&t, &t.root, &dl, &dn, 0);
+    t.root = NULL; t.size = 0;
+    ExFreePool2(wbuf, ART_TAG, NULL, 0);
+
+    TEST_END("art_delete_subtree[EX]: oversize prefix rejected, tree unchanged");
+    return TRUE;
+}
+// ===============================
 // Suite runner
 // ===============================
 NTSTATUS run_all_art_delete_subtree_tests()
@@ -595,6 +796,10 @@ NTSTATUS run_all_art_delete_subtree_tests()
     if (!test_ads_delete_internal_subtree_node4())          all = FALSE; // (7)
     if (!test_ads_delete_internal_subtree_node256_parent()) all = FALSE; // (9)
     if (!test_ads_fallback_on_overflow_success())           all = FALSE; // (10)
+    if (!test_ads_long_prefix_partial_root_delete())         all = FALSE; // (EX1)
+    if (!test_ads_delete_internal_subtree_node16_parent())   all = FALSE; // (EX2)
+    if (!test_ads_delete_internal_subtree_node48_parent())   all = FALSE; // (EX3)
+    if (!test_ads_oversize_prefix_rejected())                all = FALSE; // (EX4)
 
     LOG_MSG("\n========================================\n");
     if (all) {
@@ -607,3 +812,5 @@ NTSTATUS run_all_art_delete_subtree_tests()
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

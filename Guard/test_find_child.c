@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // Function under test
 STATIC ART_NODE** find_child(_In_ ART_NODE* node, _In_ UCHAR c);
@@ -755,3 +757,5 @@ NTSTATUS run_all_find_child_tests()
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

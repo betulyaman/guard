@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // Under test
 STATIC NTSTATUS recursive_insert(_Inout_opt_ ART_NODE* node,
@@ -570,3 +572,5 @@ NTSTATUS run_all_recursive_insert_tests()
 
     return ok ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

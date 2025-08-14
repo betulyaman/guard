@@ -1,4 +1,5 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+#include "test_art.h"
 
 // Function under test
 STATIC NTSTATUS add_child48(_Inout_ ART_NODE48* node, _Inout_ ART_NODE** ref, _In_ UCHAR c, _In_ PVOID child);
@@ -42,7 +43,6 @@ BOOLEAN test_add_child48_guards()
     return TRUE;
 }
 
-
 //=========================================================
 // Test 2: Wrong node type
 //=========================================================
@@ -72,7 +72,6 @@ BOOLEAN test_add_child48_wrong_type()
     TEST_END("add_child48: wrong type");
     return TRUE;
 }
-
 
 //=========================================================
 // Test 3: Collision in index map (child_index[c] != 0)
@@ -110,7 +109,6 @@ BOOLEAN test_add_child48_collision()
     TEST_END("add_child48: collision");
     return TRUE;
 }
-
 
 //=========================================================
 // Test 4: Direct insert (capacity available) — success
@@ -173,7 +171,6 @@ BOOLEAN test_add_child48_direct_insert_success()
     return TRUE;
 }
 
-
 //=========================================================
 // Test 5: Inconsistent state (count<48 but no free slot) , INTERNAL_ERROR
 //=========================================================
@@ -211,7 +208,6 @@ BOOLEAN test_add_child48_inconsistent_state()
     TEST_END("add_child48: inconsistent state");
     return TRUE;
 }
-
 
 //=========================================================
 // Test 6: Full node , expand to NODE256 (happy path)
@@ -271,7 +267,6 @@ BOOLEAN test_add_child48_expand_success()
     return TRUE;
 }
 
-
 //=========================================================
 // Test 7: Full node , expand but copy loop finds invalid child index
 //         (node->child_index[i] -> pos >= 48) , STATUS_DATA_ERROR
@@ -310,7 +305,6 @@ BOOLEAN test_add_child48_expand_copy_data_error()
     TEST_END("add_child48: expand , data error in copy loop");
     return TRUE;
 }
-
 
 //=========================================================
 // Test 8: No internal alloc/free on direct insert path
@@ -474,8 +468,6 @@ BOOLEAN test_add_child48_expand_add_child256_collision()
     return TRUE;
 }
 
-
-
 //=========================================================
 // Suite Runner
 //=========================================================
@@ -510,3 +502,5 @@ NTSTATUS run_all_add_child48_tests()
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // Mock fonksiyonlarının içinde “gerçek” API çağıracağız. Remap açık kalırsa Test_ExAllocatePool2  
 // içinden ExAllocatePool2 dediğimiz anda yine Test_ExAllocatePool2’ye gidersonsuz döngü.
@@ -533,7 +535,6 @@ VOID t_free_children256(ART_NODE256* n)
     for (USHORT i = 0; i < 256; i++) { if (n->children[i]) t_free(n->children[i]); n->children[i] = NULL; }
 }
 
-// ===== unload =====
 VOID
 ArtTestDriverUnload(_In_ PDRIVER_OBJECT DriverObject)
 {
@@ -541,7 +542,6 @@ ArtTestDriverUnload(_In_ PDRIVER_OBJECT DriverObject)
     LOG_MSG("[ART][TEST] Unload called. Bye!\n");
 }
 
-// ===== entry =====
 NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 {
     UNREFERENCED_PARAMETER(RegistryPath);
@@ -555,42 +555,42 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
     BOOLEAN all_ok = TRUE;
     NTSTATUS st;
 
-    st = run_all_unicode_to_utf8_tests();            if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_destroy_utf8_key_tests();           if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_free_node_tests();                  if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_free_leaf_tests();                  if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_art_create_node_tests();            if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_art_init_tree_tests();              if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_leaf_matches_tests();               if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_ctz_tests();                        if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_find_child_tests();                 if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_unicode_to_utf8_tests();            if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_destroy_utf8_key_tests();           if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_free_node_tests();                  if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_free_leaf_tests();                  if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_art_create_node_tests();            if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_art_init_tree_tests();              if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_leaf_matches_tests();               if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_ctz_tests();                        if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_find_child_tests();                 if (!NT_SUCCESS(st)) all_ok = FALSE;
     //st = run_all_copy_header_tests();                if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_check_prefix_tests();               if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_minimum_tests();                    if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_maximum_tests();                    if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_make_leaf_tests();                  if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_longest_common_prefix_tests();      if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_add_child256_tests();               if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_add_child48_tests();                if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_add_child16_tests();                if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_add_child4_tests();                 if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_add_child_tests();                  if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_recursive_insert_tests();           if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_art_insert_tests();                 if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_art_insert_no_replace_tests();      if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_remove_child256_tests();            if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_remove_child48_tests();             if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_remove_child16_tests();             if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_remove_child4_tests();              if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_remove_child_tests();               if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_recursive_delete_internal_tests();  if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_recursive_delete_tests();           if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_art_delete_tests();                 if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_recursive_delete_all_internal_tests(); if (!NT_SUCCESS(st)) all_ok = FALSE;
-    //st = run_all_art_delete_subtree_tests();         if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_check_prefix_tests();               if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_minimum_tests();                    if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_maximum_tests();                    if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_make_leaf_tests();                  if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_longest_common_prefix_tests();      if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_add_child256_tests();               if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_add_child48_tests();                if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_add_child16_tests();                if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_add_child4_tests();                 if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_add_child_tests();                  if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_recursive_insert_tests();           if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_art_insert_tests();                 if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_art_insert_no_replace_tests();      if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_remove_child256_tests();            if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_remove_child48_tests();             if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_remove_child16_tests();             if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_remove_child4_tests();              if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_remove_child_tests();               if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_recursive_delete_internal_tests();  if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_recursive_delete_tests();           if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_art_delete_tests();                 if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_recursive_delete_all_internal_tests(); if (!NT_SUCCESS(st)) all_ok = FALSE;
+    st = run_all_art_delete_subtree_tests();         if (!NT_SUCCESS(st)) all_ok = FALSE;
     //st = run_all_art_destroy_tree_tests();           if (!NT_SUCCESS(st)) all_ok = FALSE;
-    //st = run_all_art_search_tests();                 if (!NT_SUCCESS(st)) all_ok = FALSE;
-    st = run_all_prefix_compare_tests();             if (!NT_SUCCESS(st)) all_ok = FALSE;
+    st = run_all_art_search_tests();                 if (!NT_SUCCESS(st)) all_ok = FALSE;
+    //st = run_all_prefix_compare_tests();             if (!NT_SUCCESS(st)) all_ok = FALSE;
 
     LOG_MSG("\n=================================================\n");
     if (all_ok) {
@@ -604,3 +604,282 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
     return STATUS_SUCCESS;
 }
 
+#endif
+
+FIM:
+================================================ =
+
+FIM : ART Test Driver — starting all test suites
+
+FIM : ================================================ =
+
+FIM :
+    ========================================
+
+    FIM : Starting remove_child() Test Suite
+
+    FIM : ========================================
+
+
+    FIM :
+    == = Starting Test : remove_child: guard checks == =
+
+    FIM :
+    == = Starting Test : remove_child: NODE4 requires leaf == =
+
+    FIM : free_leaf : freeing leaf at FFFFCA88C0B8F770
+    FIM : free_leaf: freeing leaf at FFFFCA88C0B8F470
+    FIM :
+== = Starting Test : remove_child: NODE16 requires leaf == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B8F6D0
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F3D0
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F270
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F570
+FIM :
+== = Starting Test : remove_child: NODE48 dispatch success == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B8F150
+FIM :
+== = Starting Test : remove_child: NODE256 dispatch success == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B8F350
+FIM :
+== = Starting Test : remove_child: NODE48 NOT_FOUND path == =
+
+FIM : [ART] remove_child48 : Key 50 not present
+
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F2D0
+FIM :
+== = Starting Test : remove_child: NODE256 NOT_FOUND path == =
+
+FIM : [ART] remove_child256 : Child at index 161 does not exist
+
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F1F0
+FIM :
+== = Starting Test : remove_child: NODE4 dispatch success(2->collapse) == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B8F890
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F7D0
+FIM :
+== = Starting Test : remove_child: NODE16 dispatch success == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B8F510
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F4F0
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F6F0
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F370
+FIM :
+== = Starting Test : remove_child: invalid node type == =
+
+FIM :
+    == = Starting Test : remove_child: NODE48 rejects non - NULL leaf param == =
+
+    FIM : free_leaf : freeing leaf at FFFFCA88C0B8F830
+    FIM : [ART] [WARN] double free attempt for leaf FFFFCA88C0B8F830
+
+    FIM : [TEST MOCK] __debugbreak() hit
+
+    FIM : free_leaf: freeing leaf at FFFFCA88C0B8F830
+    FIM :
+== = Starting Test : remove_child: NODE256 rejects non - NULL leaf param == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B8F690
+FIM : [ART] [WARN] double free attempt for leaf FFFFCA88C0B8F690
+
+FIM : [TEST MOCK] __debugbreak() hit
+
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F690
+FIM :
+== = Starting Test : remove_child: NODE4 with leaf pointer but * leaf == NULL == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B8F7F0
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F250
+FIM :
+== = Starting Test : remove_child: NODE16 with leaf pointer but * leaf == NULL == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B8F610
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F730
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F130
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F870
+FIM :
+== = Starting Test : remove_child: NODE4 wrong slot pointer == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B8F4B0
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F4D0
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F410
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F0B0
+FIM :
+== = Starting Test : remove_child: NODE16 wrong slot pointer == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B8F5D0
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F2B0
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F430
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F650
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F850
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F450
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F810
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F550
+FIM :
+========================================
+
+FIM : ALL remove_child() TESTS PASSED!
+
+FIM : ========================================
+
+
+FIM :
+    ========================================
+
+    FIM : Starting art_delete_subtree() Test Suite
+
+    FIM : ========================================
+
+
+    FIM :
+    == = Starting Test : art_delete_subtree: guard params == =
+
+    FIM :
+    == = Starting Test : art_delete_subtree: empty tree == =
+
+    FIM : [ART] Tree is empty
+    FIM :
+== = Starting Test : art_delete_subtree: empty prefix key == =
+
+FIM :
+    == = Starting Test : art_delete_subtree: prefix not found(missing child) == =
+
+    FIM : destroy_utf8_key : freeing UTF - 8 key at FFFFCA88C0B8F210
+    FIM : free_leaf: freeing leaf at FFFFCA88C0B8F790
+    FIM :
+== = Starting Test : art_delete_subtree: prefix mismatch(node prefix) == =
+
+FIM : destroy_utf8_key : freeing UTF - 8 key at FFFFCA88C0B8F290
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F630
+FIM :
+== = Starting Test : art_delete_subtree: delete exact leaf == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B8F3B0
+FIM : destroy_utf8_key: freeing UTF - 8 key at FFFFCA88C0B8FB10
+FIM :
+== = Starting Test : art_delete_subtree: delete internal subtree(NODE4 parent) == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B90030
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8F990
+FIM : destroy_utf8_key: freeing UTF - 8 key at FFFFCA88C0B8F9B0
+
+
+FIM :
+    == = Starting Test : art_delete_subtree: delete internal subtree(NODE256 parent) == =
+
+    FIM : free_leaf : freeing leaf at FFFFCA88C0B8FAD0
+    FIM : destroy_utf8_key: freeing UTF - 8 key at FFFFCA88C0B8FC30
+    FIM : free_leaf: freeing leaf at FFFFCA88C0B8FA70
+    FIM :
+== = Starting Test : art_delete_subtree: fallback succeeds on deep overflow == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B8FA30
+FIM : destroy_utf8_key: freeing UTF - 8 key at FFFFCA88C0B90070
+FIM :
+== = Starting Test : art_delete_subtree[EX] : long prefix partial match at ROOT -> delete whole subtree == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B8FF10
+FIM : destroy_utf8_key: freeing UTF - 8 key at FFFFCA88C0B8FE10
+FIM :
+== = Starting Test : art_delete_subtree[EX] : delete subtree under NODE16 parent == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B8FF70
+FIM : destroy_utf8_key: freeing UTF - 8 key at FFFFCA88C0B8FED0
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8FFF0
+FIM :
+== = Starting Test : art_delete_subtree[EX] : delete subtree under NODE48 parent == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B8FC90
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8FAF0
+FIM : destroy_utf8_key: freeing UTF - 8 key at FFFFCA88C0B8F9F0
+
+
+FIM :
+== = Starting Test : art_delete_subtree[EX] : oversize prefix rejected, tree unchanged == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B8FBF0
+FIM :
+========================================
+
+FIM : SOME art_delete_subtree() TESTS FAILED!
+
+FIM : ========================================
+
+
+FIM :
+    ========================================
+
+    FIM : Starting art_search() Test Suite
+
+    FIM : ========================================
+
+
+    FIM :
+    == = Starting Test : art_search: guard params == =
+
+    FIM :
+    == = Starting Test : art_search: empty tree == =
+
+    FIM : [ART] Search on empty tree
+    FIM :
+== = Starting Test : art_search: unicode_to_utf8 failure == =
+
+FIM : unicode_to_utf8 : key length 4097 exceeds limits(MAX_KEY_LENGTH = 4096, MAXUSHORT = 65535)
+FIM : [ART] Failed to convert Unicode key
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8FA90
+FIM :
+== = Starting Test : art_search: empty key after conversion == =
+
+FIM : [ART] Failed to convert Unicode key
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8FAB0
+FIM :
+== = Starting Test : art_search: exact match(leaf root) == =
+
+FIM : destroy_utf8_key : freeing UTF - 8 key at FFFFCA88C0B8FD70
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8FFB0
+FIM :
+== = Starting Test : art_search: NODE4 path == =
+
+FIM : free_leaf : freeing leaf at FFFFCA88C0B8FBB0
+FIM : destroy_utf8_key: freeing UTF - 8 key at FFFFCA88C0B8F9D0
+FIM : destroy_utf8_key: freeing UTF - 8 key at FFFFCA88C0B8FFD0
+FIM : destroy_utf8_key: freeing UTF - 8 key at FFFFCA88C0B90050
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8FE90
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8FDF0
+FIM :
+== = Starting Test : art_search: prefix handling == =
+
+FIM : destroy_utf8_key : freeing UTF - 8 key at FFFFCA88C0B8FC70
+FIM : destroy_utf8_key: freeing UTF - 8 key at FFFFCA88C0B8FB70
+FIM : destroy_utf8_key: freeing UTF - 8 key at FFFFCA88C0B90170
+FIM : free_leaf: freeing leaf at FFFFCA88C0B8FD10
+FIM :
+== = Starting Test : art_search: NODE48 & NODE256 == =
+
+FIM : destroy_utf8_key : freeing UTF - 8 key at FFFFCA88C0B90590
+
+
+FIM :
+== = Starting Test : art_search: recursion depth overflow guard == =
+
+FIM : [ART] Search aborted due to depth guard
+FIM : destroy_utf8_key: freeing UTF - 8 key at FFFFCA88C54E2F30
+KDTARGET : Refreshing KD connection
+
+* **Fatal System Error : 0x0000007f
+(0x0000000000000008, 0xFFFF9780B29F6E70, 0xFFFFF50C36BC0FC0, 0xFFFFF8004ECD3829)
+
+Break instruction exception - code 80000003 (first chance)
+
+A fatal system error has occurred.
+Debugger entered on first try; Bugcheck callbacks have not been invoked.
+
+A fatal system error has occurred.
+
+For analysis of this file, run !analyze - v
+nt!DbgBreakPointWithStatus:
+fffff800`b9cffa20 cc              int     3

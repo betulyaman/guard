@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // Function under test
 STATIC NTSTATUS remove_child256(_In_ ART_NODE256* node,
@@ -340,6 +342,115 @@ BOOLEAN test_remove_child256_resize_count_mismatch_rollback()
 }
 
 // ===============================================================
+// Test 7: Remove last child -> publish NULL and free old NODE256
+// ===============================================================
+BOOLEAN test_remove_child256_remove_last_child()
+{
+    TEST_START("remove_child256: remove last child -> publish NULL");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_LEAF* leaves[1] = { 0 };
+
+    // Tek çocuklu NODE256 oluştur
+    ART_NODE256* n256 = t_make_node256_with_children_count(/*count*/ 1, /*start_key*/ 200,
+        &ref, leaves, RTL_NUMBER_OF(leaves));
+    TEST_ASSERT(n256 != NULL, "7-pre: created node256 with 1 child");
+    TEST_ASSERT(n256->base.num_of_child == 1, "7-pre: count=1");
+    UCHAR idx = 200;
+    TEST_ASSERT(n256->children[idx] != NULL, "7-pre: child exists at 200");
+
+    ULONG frees_before = g_free_call_count;
+
+    // Çocuğu sil: count -> 0 olmalı, *ref NULL yapılmalı ve eski NODE256 free edilmeli
+    NTSTATUS st = remove_child256(n256, &ref, idx);
+    TEST_ASSERT(NT_SUCCESS(st), "7.1: removal succeeds");
+    TEST_ASSERT(ref == NULL, "7.2: ref is NULL after publishing");
+    TEST_ASSERT(g_free_call_count == frees_before + 1, "7.3: old NODE256 freed exactly once");
+
+    // Not: n256 burada zaten free edildi; dokunma.
+    // Leaf'i biz free etmiyoruz; remove_child256 sadece node’u serbest bırakır,
+    // çocuk leaf’ler üst katmanda serbest bırakılır. Bu testte leaf sayacı yok,
+    // çünkü sadece yayınlama semantiğini doğruluyoruz.
+
+    TEST_END("remove_child256: remove last child -> publish NULL");
+    return TRUE;
+}
+
+#if DEBUG
+// ===============================================================
+// Test 8 (DEBUG): *ref != node kötü-kullanım -> INVALID_PARAMETER
+// ===============================================================
+BOOLEAN test_remove_child256_bad_ref_debug()
+{
+    TEST_START("remove_child256 (DEBUG): bad ref pointer");
+
+    reset_mock_state();
+
+    ART_NODE* ref_correct = NULL;
+    ART_NODE256* n256 = t_make_node256_with_children_count(/*count*/ 2, /*start_key*/ 10,
+        &ref_correct, NULL, 0);
+    TEST_ASSERT(n256 != NULL, "8-pre: created node256 with 2 children");
+
+    // Yanlış ref: başka bir gösterici (dummy)
+    ART_NODE* bogus = NULL;
+
+    NTSTATUS st = remove_child256(n256, &bogus, 10);
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "8.1: DEBUG misuse must be rejected");
+
+    // Temizlik
+    t_free_node256_and_leaf_children(&n256);
+
+    TEST_END("remove_child256 (DEBUG): bad ref pointer");
+    return TRUE;
+}
+#endif
+
+// ===============================================================
+// Test 9 (Opsiyonel): copy_header başarısız -> rollback
+// Amaç: 38 -> sil -> 37 shrink path; copy_header hata verince
+// child+count+ref restore edilmeli.
+// ===============================================================
+BOOLEAN test_remove_child256_copy_header_fail_rollback()
+{
+    TEST_START("remove_child256: copy_header failure -> rollback");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_NODE256* n256 = t_make_node256_with_children_count(/*count*/ 38, /*start_key*/ 30, &ref, NULL, 0);
+    TEST_ASSERT(n256 != NULL, "9-pre: created node256 with 38 children");
+    UCHAR remove_index = 35;
+    TEST_ASSERT(n256->children[remove_index] != NULL, "9-pre: child exists at remove_index");
+    USHORT before_count = n256->base.num_of_child;
+    ART_NODE* saved_ptr = n256->children[remove_index];
+
+    // copy_header'ı bir kez hataya zorla (test altyapında mevcut olduğunu varsayalım)
+#if DEBUG
+    g_copy_header_fail_once_flag = 1;
+    g_copy_header_fail_status = STATUS_DATA_ERROR;
+#endif
+
+    NTSTATUS st = remove_child256(n256, &ref, remove_index);
+#if DEBUG
+    TEST_ASSERT(st == STATUS_DATA_ERROR, "9.1: copy_header failure bubbled");
+#else
+    // Release derlemede FI kapalı olabilir; en azından başarısız olmamalı
+    TEST_ASSERT(!NT_SUCCESS(st), "9.1: expected failure with FI");
+#endif
+    // Rollback doğrula
+    TEST_ASSERT(n256->base.num_of_child == before_count, "9.2: num_of_child restored");
+    TEST_ASSERT(n256->children[remove_index] == saved_ptr, "9.3: removed child restored");
+    TEST_ASSERT((ART_NODE256*)ref == n256, "9.4: ref unchanged");
+
+    t_free_node256_and_leaf_children(&n256);
+
+    TEST_END("remove_child256: copy_header failure -> rollback");
+    return TRUE;
+}
+
+// ===============================================================
 // Suite Runner
 // ===============================================================
 NTSTATUS run_all_remove_child256_tests()
@@ -357,6 +468,9 @@ NTSTATUS run_all_remove_child256_tests()
     if (!test_remove_child256_alloc_failure_rollback())             all = FALSE; // 5
     if (!test_remove_child256_branches_documentation())             all = FALSE; // 6 (doc/skip)
     if (!test_remove_child256_resize_count_mismatch_rollback())     all = FALSE; // X
+    if (!test_remove_child256_remove_last_child())                all = FALSE; // 7
+    if (!test_remove_child256_bad_ref_debug())                    all = FALSE; // 8
+    if (!test_remove_child256_copy_header_fail_rollback())        all = FALSE; // 9
 
     LOG_MSG("\n========================================\n");
     if (all) {
@@ -369,3 +483,5 @@ NTSTATUS run_all_remove_child256_tests()
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

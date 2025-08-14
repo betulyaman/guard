@@ -1,4 +1,5 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+#include "test_art.h"
 
 // Function under test
 STATIC NTSTATUS add_child16(_Inout_ ART_NODE16* node,
@@ -782,3 +783,6 @@ NTSTATUS run_all_add_child16_tests()
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif
+

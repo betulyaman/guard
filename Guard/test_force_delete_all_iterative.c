@@ -1,3 +1,5 @@
+#if UNIT_TEST
+
 #include "test_art.h"
 
 // Under test
@@ -457,3 +459,5 @@ NTSTATUS run_all_force_delete_all_iterative_tests()
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

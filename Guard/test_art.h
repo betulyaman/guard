@@ -1,4 +1,5 @@
-﻿#pragma once
+﻿#if UNIT_TEST
+
 #include "adaptive_radix_tree.h"
 #include "log.h"
 
@@ -147,3 +148,5 @@ VOID    t_free_children4(ART_NODE4* n);
 VOID    t_free_children16(ART_NODE16* n);
 VOID    t_free_children48(ART_NODE48* n);
 VOID    t_free_children256(ART_NODE256* n);
+
+#endif

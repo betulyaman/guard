@@ -29,19 +29,10 @@
 #define SIZE_T_MAX ((SIZE_T)~(SIZE_T)0)   // max of SIZE_T without pulling stdint.h
 #endif
 
-#ifdef DEBUG
+#if UNIT_TEST
 // Poison value to detect double-frees on leaves
 #define LEAF_FREED_MAGIC ((USHORT)0xDEAD)
 #endif
-
-#ifndef ART_ENABLE_POISON_ON_FREE
-#  ifdef DEBUG
-#    define ART_ENABLE_POISON_ON_FREE 1
-#  else
-#    define ART_ENABLE_POISON_ON_FREE 0
-#  endif
-#endif
-
 
 typedef enum { 
 	NODE4 = 1, 
@@ -146,7 +137,7 @@ ART_LEAF* art_minimum(ART_TREE* t);
 /** Returns the maximum valued leaf or NULL. */
 ART_LEAF* art_maximum(ART_TREE* t);
 
-#if defined(UNIT_TEST)
+#if UNIT_TEST
 
 extern PVOID Test_ExAllocatePool2(ULONG PoolFlags, SIZE_T NumberOfBytes, ULONG Tag);
 extern VOID Test_ExFreePool2(PVOID P, ULONG Tag, PCPOOL_EXTENDED_PARAMETER ExtendedParameters, ULONG ExtendedParametersCount);

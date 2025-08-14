@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 STATIC NTSTATUS recursive_delete_all_internal(_Inout_ ART_TREE* tree, _Inout_ ART_NODE** slot, _Inout_ PULONG leaf_count, _Inout_ PULONG node_count, _In_ USHORT recursion_depth);
 
@@ -392,6 +394,165 @@ BOOLEAN test_delete_all_internal_deep()
     return TRUE;
 }
 
+BOOLEAN test_delete_all_internal_mid_overflow_no_mutation()
+{
+    TEST_START("recursive_delete_all_internal: mid-recursion overflow keeps child intact");
+
+    // root NODE4 -> child leaf
+    ART_NODE4* n4 = da_make_node4();
+    TEST_ASSERT(n4, "pre: NODE4");
+    UCHAR k = 1;
+    ART_LEAF* lf = make_leaf(&k, 1, 0x10);
+    TEST_ASSERT(lf, "pre: leaf");
+    ART_NODE* ch = (ART_NODE*)SET_LEAF(lf);
+    UCHAR key = k;
+    TEST_ASSERT(da_node4_set(n4, &key, 1, &ch), "pre: wire child");
+
+    ART_NODE* slot = (ART_NODE*)n4;
+    ART_TREE t; da_zero(&t, sizeof(t));
+    ULONG leaves = 0, nodes = 0;
+
+    // recursion_depth = MAX-1 → parent loop sees (d+1)>=MAX, returns STACK_OVERFLOW
+    NTSTATUS st = recursive_delete_all_internal(&t, &slot, &leaves, &nodes,
+        (USHORT)(MAX_RECURSION_DEPTH - 1));
+
+    TEST_ASSERT(st == STATUS_STACK_OVERFLOW, "returns STACK_OVERFLOW");
+    TEST_ASSERT(slot == (ART_NODE*)n4, "slot must remain untouched");
+    TEST_ASSERT(n4->children[0] == (ART_NODE*)SET_LEAF(lf), "child still present");
+    TEST_ASSERT(leaves == 0 && nodes == 0, "counters unchanged");
+
+    // cleanup
+    da_free_all(&slot);
+
+    TEST_END("mid-recursion overflow keeps child intact");
+    return TRUE;
+}
+
+BOOLEAN test_delete_all_internal_unaligned_slot_noop()
+{
+    TEST_START("recursive_delete_all_internal: unaligned slot is a no-op");
+
+    ART_TREE t; da_zero(&t, sizeof(t));
+    ULONG leaves = 5, nodes = 6;
+
+#pragma warning(push)
+#pragma warning(disable:6387)
+    NTSTATUS st = recursive_delete_all_internal(&t, (ART_NODE**)1, &leaves, &nodes, 0);
+#pragma warning(pop)
+    TEST_ASSERT(NT_SUCCESS(st), "returns SUCCESS");
+    TEST_ASSERT(leaves == 5 && nodes == 6, "counters unchanged");
+
+    TEST_END("unaligned slot is a no-op");
+    return TRUE;
+}
+
+BOOLEAN test_delete_all_internal_node48_duplicate_map()
+{
+    TEST_START("recursive_delete_all_internal: NODE48 duplicate mapping stability");
+
+    ART_NODE48* n48 = da_make_node48(); TEST_ASSERT(n48, "pre: NODE48");
+    da_zero(n48->child_index, sizeof(n48->child_index));
+    da_zero(n48->children, sizeof(n48->children));
+
+    // One child at children[0], but two different bytes map to it (corrupt but possible)
+    UCHAR b1 = 10, b2 = 77;
+    UCHAR key = 'X';
+    ART_LEAF* lf = make_leaf(&key, 1, 0xAA); TEST_ASSERT(lf, "leaf");
+    n48->children[0] = (ART_NODE*)SET_LEAF(lf);
+    n48->child_index[b1] = 1; // -> children[0]
+    n48->child_index[b2] = 1; // duplicate map to same slot
+    n48->base.num_of_child = 1;
+
+    ART_NODE* slot = (ART_NODE*)n48;
+    ART_TREE t; da_zero(&t, sizeof(t));
+    ULONG leaves = 0, nodes = 0;
+
+    NTSTATUS st = recursive_delete_all_internal(&t, &slot, &leaves, &nodes, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "success");
+    TEST_ASSERT(leaves == 1, "exactly one leaf freed");
+    TEST_ASSERT(nodes == 2, "leaf + NODE48 freed");
+    TEST_ASSERT(slot == NULL, "slot cleared");
+
+    TEST_END("NODE48 duplicate mapping stability");
+    return TRUE;
+}
+
+BOOLEAN test_delete_all_internal_node48_stale_map()
+{
+    TEST_START("recursive_delete_all_internal: NODE48 stale mapping");
+
+    ART_NODE48* n48 = da_make_node48(); TEST_ASSERT(n48, "pre");
+    da_zero(n48->child_index, sizeof(n48->child_index));
+    da_zero(n48->children, sizeof(n48->children));
+
+    // Map byte 42 -> children[0], but children[0] is NULL (stale)
+    n48->child_index[42] = 1;
+    n48->base.num_of_child = 0; // inconsistent but tolerated
+
+    ART_NODE* slot = (ART_NODE*)n48;
+    ART_TREE t; da_zero(&t, sizeof(t));
+    ULONG leaves = 0, nodes = 0;
+
+    NTSTATUS st = recursive_delete_all_internal(&t, &slot, &leaves, &nodes, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "success");
+    TEST_ASSERT(leaves == 0, "no leaves freed");
+    TEST_ASSERT(nodes == 1, "only the NODE48 freed");
+    TEST_ASSERT(slot == NULL, "slot cleared");
+
+    TEST_END("NODE48 stale mapping");
+    return TRUE;
+}
+
+BOOLEAN test_delete_all_internal_node4_corrupt_count()
+{
+    TEST_START("recursive_delete_all_internal: NODE4 corrupt child count tolerated");
+
+    ART_NODE4* n4 = da_make_node4(); TEST_ASSERT(n4, "pre: NODE4");
+    // Two real children in slots 0,1; but num_of_child is corrupt (7)
+    UCHAR kb[2] = { 1, 3 };
+    ART_LEAF* l0 = make_leaf(&kb[0], 1, 0x1); TEST_ASSERT(l0, "leaf0");
+    ART_LEAF* l1 = make_leaf(&kb[1], 1, 0x2); TEST_ASSERT(l1, "leaf1");
+    ART_NODE* ch[2] = { (ART_NODE*)SET_LEAF(l0), (ART_NODE*)SET_LEAF(l1) };
+    TEST_ASSERT(da_node4_set(n4, kb, 2, ch), "wire");
+    n4->base.num_of_child = 7; // corrupt
+
+    ART_NODE* slot = (ART_NODE*)n4;
+    ART_TREE t; da_zero(&t, sizeof(t));
+    ULONG leaves = 0, nodes = 0;
+
+    NTSTATUS st = recursive_delete_all_internal(&t, &slot, &leaves, &nodes, 0);
+    TEST_ASSERT(NT_SUCCESS(st), "success");
+    TEST_ASSERT(leaves == 2, "frees actual leaves only");
+    TEST_ASSERT(nodes == 3, "2 leaves + NODE4");
+    TEST_ASSERT(slot == NULL, "slot cleared");
+
+    TEST_END("NODE4 corrupt child count tolerated");
+    return TRUE;
+}
+
+BOOLEAN test_delete_all_internal_invalid_type_no_mutation()
+{
+    TEST_START("recursive_delete_all_internal: invalid node type");
+
+    ART_NODE4* n4 = da_make_node4(); TEST_ASSERT(n4, "pre");
+    n4->base.type = (NODE_TYPE)0xFF; // invalid
+    ART_NODE* slot = (ART_NODE*)n4;
+
+    ART_TREE t; da_zero(&t, sizeof(t));
+    ULONG leaves = 0, nodes = 0;
+
+    NTSTATUS st = recursive_delete_all_internal(&t, &slot, &leaves, &nodes, 0);
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "invalid type rejected");
+    TEST_ASSERT(slot == (ART_NODE*)n4, "slot not mutated on error");
+    TEST_ASSERT(leaves == 0 && nodes == 0, "counters unchanged");
+
+    // cleanup
+    da_free_all(&slot);
+
+    TEST_END("invalid node type");
+    return TRUE;
+}
+
 // ============================
 // Suite runner
 // ============================
@@ -410,6 +571,13 @@ NTSTATUS run_all_recursive_delete_all_internal_tests()
     if (!test_delete_all_internal_node48_sparse())  all = FALSE; // (5)
     if (!test_delete_all_internal_node256_mixed())  all = FALSE; // (6)
     if (!test_delete_all_internal_deep())           all = FALSE; // (7)
+    if (!test_delete_all_internal_mid_overflow_no_mutation())   all = FALSE;
+    if (!test_delete_all_internal_unaligned_slot_noop())        all = FALSE;
+    if (!test_delete_all_internal_node48_duplicate_map())       all = FALSE;
+    if (!test_delete_all_internal_node48_stale_map())           all = FALSE;
+    if (!test_delete_all_internal_node4_corrupt_count())        all = FALSE;
+    if (!test_delete_all_internal_invalid_type_no_mutation())   all = FALSE;
+
 
     LOG_MSG("\n========================================\n");
     if (all) {
@@ -422,3 +590,6 @@ NTSTATUS run_all_recursive_delete_all_internal_tests()
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+
+#endif

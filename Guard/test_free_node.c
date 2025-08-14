@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 STATIC inline VOID free_node(_Inout_ ART_NODE** node);
 
@@ -358,3 +360,5 @@ NTSTATUS run_all_free_node_tests()
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

@@ -1,4 +1,6 @@
-﻿#include <ntifs.h>
+﻿#if UNIT_TEST
+
+#include <ntifs.h>
 #include <ntstrsafe.h>
 #include "test_art.h"
 
@@ -831,3 +833,5 @@ NTSTATUS run_all_unicode_to_utf8_tests()
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

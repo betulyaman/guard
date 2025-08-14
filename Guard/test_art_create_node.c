@@ -1,4 +1,5 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+#include "test_art.h"
 
 #define PER_TYPE  16
 
@@ -381,3 +382,5 @@ NTSTATUS run_all_art_create_node_tests()
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

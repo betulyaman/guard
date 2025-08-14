@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // Function under test
 NTSTATUS art_insert_no_replace(_Inout_ ART_TREE* tree,
@@ -634,3 +636,5 @@ NTSTATUS run_all_art_insert_no_replace_tests()
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

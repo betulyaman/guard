@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // Function under test
 STATIC NTSTATUS remove_child(_In_ ART_NODE* node, _Inout_ ART_NODE** ref,
@@ -475,6 +477,158 @@ BOOLEAN test_remove_child_invalid_type()
     return TRUE;
 }
 
+BOOLEAN test_remove_child_node48_rejects_leaf_param()
+{
+    TEST_START("remove_child: NODE48 rejects non-NULL leaf param");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL; ART_LEAF* lf = NULL;
+    const UCHAR keyC = 0x40;
+    ART_NODE48* n48 = t_make_node48_with_one_child(&ref, keyC, &lf);
+    TEST_ASSERT(n48 && lf, "pre: NODE48(1)");
+
+    // Pass a dummy (non-NULL) leaf slot pointer -> must be invalid
+    ART_NODE* dummy = NULL; ART_NODE** bogus_slot = &dummy;
+    NTSTATUS st = remove_child((ART_NODE*)n48, &ref, keyC, bogus_slot);
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "leaf!=NULL is invalid for NODE48");
+
+    // cleanup
+    t_free_node_only(&ref);
+    free_leaf(&lf);
+
+    TEST_END("remove_child: NODE48 rejects non-NULL leaf param");
+    return TRUE;
+}
+BOOLEAN test_remove_child_node256_rejects_leaf_param()
+{
+    TEST_START("remove_child: NODE256 rejects non-NULL leaf param");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL; ART_LEAF* lf = NULL;
+    const UCHAR keyC = 0x55;
+    ART_NODE256* n256 = t_make_node256_with_one_child(&ref, keyC, &lf);
+    TEST_ASSERT(n256 && lf, "pre: NODE256(1)");
+
+    ART_NODE* dummy = NULL; ART_NODE** bogus_slot = &dummy;
+    NTSTATUS st = remove_child((ART_NODE*)n256, &ref, keyC, bogus_slot);
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "leaf!=NULL is invalid for NODE256");
+
+    t_free_node_only(&ref);
+    free_leaf(&lf);
+
+    TEST_END("remove_child: NODE256 rejects non-NULL leaf param");
+    return TRUE;
+}
+
+BOOLEAN test_remove_child_node4_leaf_pointer_to_null()
+{
+    TEST_START("remove_child: NODE4 with leaf pointer but *leaf==NULL");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL; ART_NODE** slot0 = NULL; ART_NODE** slot1 = NULL;
+    ART_LEAF* l0 = NULL; ART_LEAF* l1 = NULL;
+
+    ART_NODE4* n4 = t_make_node4_with_two_leaves(&ref, &slot0, &slot1, &l0, &l1);
+    TEST_ASSERT(n4 && slot0, "pre: NODE4(2)");
+
+    // Invalidate slot0 content
+    *slot0 = NULL;
+
+    NTSTATUS st = remove_child((ART_NODE*)n4, &ref, 0, slot0);
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "*leaf==NULL -> invalid");
+
+    // cleanup
+    // restore to free leaves
+    *slot0 = (ART_NODE*)SET_LEAF(l0);
+    t_free_node_only((ART_NODE**)&n4); // frees leaves too
+    // l0/l1 already freed by t_free_node_only
+
+    TEST_END("remove_child: NODE4 with leaf pointer but *leaf==NULL");
+    return TRUE;
+}
+
+BOOLEAN test_remove_child_node16_leaf_pointer_to_null()
+{
+    TEST_START("remove_child: NODE16 with leaf pointer but *leaf==NULL");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL; ART_NODE16* n16 = t_make_node16_with_four_leaves(&ref, NULL);
+    TEST_ASSERT(n16, "pre: NODE16(4)");
+
+    ART_NODE* dummy = NULL; ART_NODE** null_slot = &dummy; // *null_slot == NULL
+    NTSTATUS st = remove_child((ART_NODE*)n16, &ref, 0, null_slot);
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "*leaf==NULL -> invalid");
+
+    t_free_node_only(&ref);
+
+    TEST_END("remove_child: NODE16 with leaf pointer but *leaf==NULL");
+    return TRUE;
+}
+
+BOOLEAN test_remove_child_node4_wrong_slot_pointer()
+{
+    TEST_START("remove_child: NODE4 wrong slot pointer");
+
+    reset_mock_state();
+
+    ART_NODE* refA = NULL; ART_NODE** slotA0 = NULL; ART_NODE** slotA1 = NULL;
+    ART_LEAF* lA0 = NULL; ART_LEAF* lA1 = NULL;
+    ART_NODE4* a = t_make_node4_with_two_leaves(&refA, &slotA0, &slotA1, &lA0, &lA1);
+    TEST_ASSERT(a && slotA0 && slotA1, "pre A");
+
+    ART_NODE* refB = NULL; ART_NODE** slotB0 = NULL; ART_NODE** slotB1 = NULL;
+    ART_LEAF* lB0 = NULL; ART_LEAF* lB1 = NULL;
+    ART_NODE4* b = t_make_node4_with_two_leaves(&refB, &slotB0, &slotB1, &lB0, &lB1);
+    TEST_ASSERT(b && slotB0, "pre B");
+
+    // pass B’nin slotunu A’ya karşı
+    NTSTATUS st = remove_child((ART_NODE*)a, &refA, 0, slotB0);
+#if DEBUG
+    TEST_ASSERT(st == STATUS_NOT_FOUND, "DEBUG: wrong slot -> NOT_FOUND");
+#else
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "RELEASE: wrong slot -> INVALID_PARAMETER (from remove_child4)");
+#endif
+
+    // cleanup
+    t_free_node_only(&refA);
+    t_free_node_only(&refB);
+
+    TEST_END("remove_child: NODE4 wrong slot pointer");
+    return TRUE;
+}
+
+BOOLEAN test_remove_child_node16_wrong_slot_pointer()
+{
+    TEST_START("remove_child: NODE16 wrong slot pointer");
+
+    reset_mock_state();
+
+    ART_NODE* refA = NULL; ART_NODE** slotA2 = NULL;
+    ART_NODE16* a = t_make_node16_with_four_leaves(&refA, &slotA2);
+    TEST_ASSERT(a, "pre A");
+
+    ART_NODE* refB = NULL; ART_NODE** slotB2 = NULL;
+    ART_NODE16* b = t_make_node16_with_four_leaves(&refB, &slotB2);
+    TEST_ASSERT(b && slotB2, "pre B");
+
+    NTSTATUS st = remove_child((ART_NODE*)a, &refA, 0, slotB2);
+#if DEBUG
+    TEST_ASSERT(st == STATUS_NOT_FOUND, "DEBUG: wrong slot -> NOT_FOUND");
+#else
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "RELEASE: wrong slot -> INVALID_PARAMETER (from remove_child16)");
+#endif
+
+    t_free_node_only(&refA);
+    t_free_node_only(&refB);
+
+    TEST_END("remove_child: NODE16 wrong slot pointer");
+    return TRUE;
+}
+
 // ===============================================================
 // Suite runner
 // ===============================================================
@@ -496,6 +650,12 @@ NTSTATUS run_all_remove_child_tests()
     if (!test_remove_child_node4_success())          all = FALSE; // 8
     if (!test_remove_child_node16_success())         all = FALSE; // 9
     if (!test_remove_child_invalid_type())           all = FALSE; // 10
+    if (!test_remove_child_node48_rejects_leaf_param())   all = FALSE;
+    if (!test_remove_child_node256_rejects_leaf_param())  all = FALSE;
+    if (!test_remove_child_node4_leaf_pointer_to_null())  all = FALSE;
+    if (!test_remove_child_node16_leaf_pointer_to_null()) all = FALSE;
+    if (!test_remove_child_node4_wrong_slot_pointer())    all = FALSE;
+    if (!test_remove_child_node16_wrong_slot_pointer())   all = FALSE;
 
     LOG_MSG("\n========================================\n");
     if (all) {
@@ -508,3 +668,5 @@ NTSTATUS run_all_remove_child_tests()
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

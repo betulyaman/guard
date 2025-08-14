@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // SUT
 NTSTATUS art_destroy_tree(_Inout_ ART_TREE* tree);
@@ -429,6 +431,79 @@ BOOLEAN test_destroy_utf8_key_records_pointer()
     return TRUE;
 }
 
+// --- EXTRA TESTS FOR art_destroy_tree ---------------------------------------
+
+BOOLEAN test_destroy_recursive_invalid_type_then_fallback()
+{
+    TEST_START("art_destroy_tree: recursive INVALID_PARAMETER, fallback cleans, rc==recursive");
+
+    // Build a tiny tree with an INVALID node type at root so that
+    // recursive_delete_all_internal(...) returns STATUS_INVALID_PARAMETER.
+    ART_NODE4* bad = mk_n4();
+    TEST_ASSERT(bad != NULL, "E1-pre: NODE4 allocated");
+    bad->base.type = (NODE_TYPE)0xFF; // invalid type to force recursive failure
+    // Give it one child (leaf) so there is actual memory to be reclaimed by fallback.
+    UCHAR kv = 'k';
+    ART_LEAF* lf = make_leaf(&kv, 1, 0x123);
+    TEST_ASSERT(lf != NULL, "E1-pre: leaf allocated");
+    ART_NODE* ch = (ART_NODE*)SET_LEAF(lf);
+    UCHAR kk = 0x11;
+    TEST_ASSERT(n4_set(bad, &kk, 1, &ch), "E1-pre: wire invalid root -> leaf");
+
+    ART_TREE t; dz(&t, sizeof(t));
+    t.root = (ART_NODE*)bad;
+    t.size = 1;
+
+    // Execute SUT
+    NTSTATUS rc = art_destroy_tree(&t);
+
+    // Contract: recursive failure is propagated (unless fallback fails).
+    TEST_ASSERT(rc == STATUS_INVALID_PARAMETER, "E1.1: rc==recursive failure (INVALID_PARAMETER)");
+    // State must be cleared regardless.
+    TEST_ASSERT(t.root == NULL, "E1.2: root cleared");
+    TEST_ASSERT(t.size == 0, "E1.3: size zeroed");
+
+    // Nothing left to free; fallback should have reclaimed both nodes.
+    TEST_END("art_destroy_tree: recursive INVALID_PARAMETER, fallback cleans, rc==recursive");
+    return TRUE;
+}
+
+BOOLEAN test_destroy_overflow_chain_returns_recursive_status_and_clears_state()
+{
+    TEST_START("art_destroy_tree: overflow chain -> rc==STACK_OVERFLOW, state cleared");
+
+    // Make a linear chain slightly over the recursion limit to trigger STACK_OVERFLOW.
+    ART_NODE* root = (ART_NODE*)mk_n4();
+    TEST_ASSERT(root != NULL, "E2-pre: root NODE4");
+
+    ART_NODE* cur = root;
+    const UCHAR edge = 0xAA;
+
+    for (USHORT i = 0; i < (USHORT)(MAX_RECURSION_DEPTH + 1); ++i) {
+        ART_NODE4* n4 = (ART_NODE4*)cur;
+        ART_NODE* next = (i == (USHORT)(MAX_RECURSION_DEPTH)) ?
+            (ART_NODE*)SET_LEAF(make_leaf((PUCHAR)&edge, 1, 0x77)) :
+            (ART_NODE*)mk_n4();
+        TEST_ASSERT(next != NULL, "E2-pre: next allocated");
+        ART_NODE* child = next;
+        UCHAR k = edge;
+        TEST_ASSERT(n4_set(n4, &k, 1, &child), "E2-pre: chain link");
+        if (!IS_LEAF(next)) cur = next;
+    }
+
+    ART_TREE t; dz(&t, sizeof(t));
+    t.root = root;
+    t.size = 1;
+
+    NTSTATUS rc = art_destroy_tree(&t);
+
+    TEST_ASSERT(rc == STATUS_STACK_OVERFLOW, "E2.1: rc==STACK_OVERFLOW (recursive status preserved)");
+    TEST_ASSERT(t.root == NULL, "E2.2: root cleared");
+    TEST_ASSERT(t.size == 0, "E2.3: size cleared");
+
+    TEST_END("art_destroy_tree: overflow chain -> rc==STACK_OVERFLOW, state cleared");
+    return TRUE;
+}
 
 // Suite runner
 NTSTATUS run_all_art_destroy_tree_tests()
@@ -452,6 +527,8 @@ NTSTATUS run_all_art_destroy_tree_tests()
     if (!test_destroy_sparse_node256_edges())            all = FALSE; // (X4)
     if (!test_destroy_alloc_free_balance())              all = FALSE; // (X5)
     if (!test_destroy_utf8_key_records_pointer())        all = FALSE; // (X6)
+    if (!test_destroy_recursive_invalid_type_then_fallback())   all = FALSE; // (EX-A)
+    if (!test_destroy_overflow_chain_returns_recursive_status_and_clears_state()) all = FALSE; // (EX-B)
 
 
     LOG_MSG("\n========================================\n");
@@ -465,3 +542,5 @@ NTSTATUS run_all_art_destroy_tree_tests()
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

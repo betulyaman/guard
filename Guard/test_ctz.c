@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 STATIC inline unsigned ctz(UINT32 x);
 
@@ -248,3 +250,5 @@ NTSTATUS run_all_ctz_tests()
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

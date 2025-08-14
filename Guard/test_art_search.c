@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // SUT
 ULONG art_search(_In_ CONST ART_TREE* tree, _In_ PCUNICODE_STRING unicode_key);
@@ -327,7 +329,6 @@ BOOLEAN test_search_prefix_handling()
     return TRUE;
 }
 
-
 // =======================================
 // Test 8: NODE48 and NODE256 search paths
 // =======================================
@@ -398,8 +399,6 @@ BOOLEAN test_search_node48_and_node256()
     return TRUE;
 }
 
-
-
 // =======================================
 // Test 9: Recursion depth overflow guard
 // =======================================
@@ -462,7 +461,6 @@ BOOLEAN test_search_depth_overflow_guard()
     return TRUE;
 }
 
-
 // =======================================
 // Suite runner
 // =======================================
@@ -495,3 +493,5 @@ NTSTATUS run_all_art_search_tests()
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

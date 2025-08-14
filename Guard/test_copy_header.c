@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // Function under test
 STATIC NTSTATUS copy_header(_Inout_ ART_NODE* dest, _In_ ART_NODE* src);
@@ -377,3 +379,6 @@ NTSTATUS run_all_copy_header_tests()
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif
+

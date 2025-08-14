@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // Function under test
 STATIC NTSTATUS remove_child4(_Inout_ ART_NODE4* node, _Inout_ ART_NODE** ref, _Inout_ ART_NODE** remove_slot);
@@ -751,6 +753,177 @@ BOOLEAN test_remove_child4_invalid_child_counts()
     return TRUE;
 }
 
+BOOLEAN test_remove_child4_ref_mismatch_debug()
+{
+    TEST_START("remove_child4: DEBUG guard *ref != node");
+
+    reset_mock_state();
+
+    ART_NODE4* n4_a = (ART_NODE4*)art_create_node(NODE4);
+    ART_NODE4* n4_b = (ART_NODE4*)art_create_node(NODE4);
+    TEST_ASSERT(n4_a && n4_b, "ref mismatch pre: alloc");
+
+    n4_a->base.type = NODE4; n4_a->base.num_of_child = 1;
+    n4_b->base.type = NODE4; n4_b->base.num_of_child = 0;
+
+    UCHAR kb[1] = { 'x' };
+    ART_LEAF* lf = make_leaf(kb, 1, 0x11);
+    TEST_ASSERT(lf, "leaf alloc");
+    n4_a->keys[0] = 'a';
+    n4_a->children[0] = (ART_NODE*)SET_LEAF(lf);
+
+    ART_NODE* ref = (ART_NODE*)n4_b; // yanlış ref
+
+    NTSTATUS st = remove_child4(n4_a, &ref, &n4_a->children[0]);
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "DEBUG guard triggers");
+
+    // cleanup
+    free_leaf(&lf);
+    t_free_node4_and_leaf_children(&n4_a);
+    t_free_node4_and_leaf_children(&n4_b);
+
+    TEST_END("remove_child4: DEBUG guard *ref != node");
+    return TRUE;
+}
+
+BOOLEAN test_remove_child4_slot_beyond_count()
+{
+    TEST_START("remove_child4: slot beyond num_of_child");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_NODE4* n4 = t_make_node4_with_children_count(2, 10, &ref, NULL, 0);
+    TEST_ASSERT(n4, "pre: NODE4(2)");
+
+    NTSTATUS st = remove_child4(n4, &ref, &n4->children[3]); // 3 geçerli alan, ama count=2
+    TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "slot beyond count rejected");
+
+    t_free_node4_and_leaf_children(&n4);
+    TEST_END("remove_child4: slot beyond num_of_child");
+    return TRUE;
+}
+
+BOOLEAN test_remove_child4_parent_full_child_empty_truncation()
+{
+    TEST_START("remove_child4: parent full, child empty, edge truncation");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL; ART_NODE* internal = NULL;
+    ART_NODE4* n4 = t_make_node4_with_internal_child(0x41 /*'A'*/, &ref, &internal);
+    TEST_ASSERT(n4 && internal, "pre");
+
+    n4->base.prefix_length = MAX_PREFIX_LENGTH;
+    for (USHORT i = 0; i < MAX_PREFIX_LENGTH; i++) n4->base.prefix[i] = 'P';
+
+    internal->prefix_length = 0;
+
+    // ikinci çocuk: leaf (silinecek)
+    UCHAR k[1] = { 'x' }; ART_LEAF* lf = make_leaf(k, 1, 1); TEST_ASSERT(lf, "leaf");
+    n4->keys[1] = 0x7A; n4->children[1] = (ART_NODE*)SET_LEAF(lf); n4->base.num_of_child = 2;
+
+    NTSTATUS st = remove_child4(n4, &ref, &n4->children[1]);
+    TEST_ASSERT(NT_SUCCESS(st), "success");
+    TEST_ASSERT(ref == internal, "ref=internal");
+    TEST_ASSERT(internal->prefix_length == (USHORT)(MAX_PREFIX_LENGTH + 1),
+        "logical len parent+edge");
+
+    // Saklanan baytlar: MAX_PREFIX_LENGTH dolu olduğu için edge sığmaz; dizi tamamen 'P' kalmalı
+    for (USHORT i = 0; i < MAX_PREFIX_LENGTH; i++) {
+        TEST_ASSERT(internal->prefix[i] == 'P', "stored bytes all P");
+    }
+
+    ART_NODE* tmp = ref; free_node(&tmp); free_leaf(&lf);
+    TEST_END("parent full, child empty, edge truncation");
+    return TRUE;
+}
+
+BOOLEAN test_remove_child4_remove_internal_middle_no_collapse()
+{
+    TEST_START("remove_child4: remove internal in the middle (no collapse)");
+
+    reset_mock_state();
+
+    ART_NODE4* n4 = (ART_NODE4*)art_create_node(NODE4);
+    TEST_ASSERT(n4, "pre: n4");
+    n4->base.type = NODE4; n4->base.num_of_child = 0;
+    t_zero(n4->keys, sizeof(n4->keys));
+    t_zero(n4->children, sizeof(n4->children));
+
+    // left leaf
+    UCHAR ka[1] = { 'a' }; ART_LEAF* la = make_leaf(ka, 1, 1);
+    // middle internal
+    ART_NODE16* n16 = (ART_NODE16*)art_create_node(NODE16);
+    // right leaf
+    UCHAR kc[1] = { 'c' }; ART_LEAF* lc = make_leaf(kc, 1, 3);
+
+    TEST_ASSERT(la && n16 && lc, "allocs ok");
+
+    n4->keys[0] = 'a'; n4->children[0] = (ART_NODE*)SET_LEAF(la);
+    n4->keys[1] = 'b'; n4->children[1] = (ART_NODE*)n16;
+    n4->keys[2] = 'c'; n4->children[2] = (ART_NODE*)SET_LEAF(lc);
+    n4->base.num_of_child = 3;
+
+    ART_NODE* ref = (ART_NODE*)n4;
+
+    NTSTATUS st = remove_child4(n4, &ref, &n4->children[1]); // internal’ı sil
+    TEST_ASSERT(NT_SUCCESS(st), "success");
+    TEST_ASSERT(((ART_NODE4*)ref) == n4, "no collapse");
+    TEST_ASSERT(n4->base.num_of_child == 2, "count=2");
+    TEST_ASSERT(n4->keys[0] == 'a' && n4->keys[1] == 'c', "keys shifted");
+    TEST_ASSERT(n4->children[0] && n4->children[1], "children shifted");
+
+    // cleanup: kalan 2 yaprağı serbest bırak
+    ART_LEAF* l0 = LEAF_RAW(n4->children[0]);
+    ART_LEAF* l1 = LEAF_RAW(n4->children[1]);
+    free_leaf(&l0); free_leaf(&l1);
+    // silinen internal test tarafından explicit free edilmeli (API serbest bırakmıyor)
+    ART_NODE* tmp = (ART_NODE*)n16; free_node(&tmp);
+    t_free_node4_and_leaf_children((ART_NODE4**)&ref);
+
+    TEST_END("remove internal middle (no collapse)");
+    return TRUE;
+}
+
+BOOLEAN test_remove_child4_collapse_edge_key_correctness()
+{
+    TEST_START("remove_child4: collapse edge byte correctness");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL; ART_NODE* internal = NULL;
+    ART_NODE4* n4 = t_make_node4_with_internal_child(/*edge*/ 0x33 /*'3'*/, &ref, &internal);
+    TEST_ASSERT(n4 && internal, "pre");
+
+    // ikinci çocuk: leaf
+    UCHAR kbuf[1] = { 'x' }; ART_LEAF* lf = make_leaf(kbuf, 1, 0x42); TEST_ASSERT(lf, "leaf");
+    n4->keys[1] = 0x7A; // 'z' -> silinecek olan leaf
+    n4->children[1] = (ART_NODE*)SET_LEAF(lf);
+    n4->base.num_of_child = 2;
+
+    // parent prefix = "PQ"
+    n4->base.prefix_length = 2; n4->base.prefix[0] = 'P'; n4->base.prefix[1] = 'Q';
+
+    // child prefix = "r"
+    internal->prefix_length = 1; internal->prefix[0] = 'r';
+
+    NTSTATUS st = remove_child4(n4, &ref, &n4->children[1]);
+    TEST_ASSERT(NT_SUCCESS(st), "success");
+    TEST_ASSERT(ref == internal, "ref=internal");
+    TEST_ASSERT(internal->prefix_length == 4, "2+1+1");
+    TEST_ASSERT(internal->prefix[0] == 'P' && internal->prefix[1] == 'Q' &&
+        internal->prefix[2] == 0x33 /*'3'*/ && internal->prefix[3] == 'r',
+        "merged bytes P,Q,edge('3'),r");
+
+    ART_NODE* tmp = ref; free_node(&tmp);
+    free_leaf(&lf);
+
+    TEST_END("collapse edge byte correctness");
+    return TRUE;
+}
+
+
 // ===============================================================
 // Suite runner
 // ===============================================================
@@ -779,6 +952,12 @@ NTSTATUS run_all_remove_child4_tests()
     if (!test_remove_child4_merge_ushort_clamp())                   all = FALSE; // E3
     if (!test_remove_child4_shift_clears_tail())                    all = FALSE; // E4
     if (!test_remove_child4_invalid_child_counts())                 all = FALSE; // E5
+    if (!test_remove_child4_ref_mismatch_debug())                 all = FALSE; 
+    if (!test_remove_child4_slot_beyond_count())                  all = FALSE; 
+    if (!test_remove_child4_remove_internal_middle_no_collapse()) all = FALSE; 
+    if (!test_remove_child4_collapse_edge_key_correctness())      all = FALSE; 
+    if (!test_remove_child4_parent_full_child_empty_truncation()) all = FALSE; 
+
 
     LOG_MSG("\n========================================\n");
     if (all) {
@@ -791,3 +970,5 @@ NTSTATUS run_all_remove_child4_tests()
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

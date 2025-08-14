@@ -1,11 +1,10 @@
 #ifndef GUARD_MINIFILTER_H
 #define GUARD_MINIFILTER_H
 
-#define DEBUG 1
 #define UNIT_TEST 1
-#define ART_ENABLE_POISON_ON_FREE 1
+#define DEBUG 1
 
-#if DEBUG
+#if UNIT_TEST
 #define LEAF_FREED_MAGIC ((USHORT)0xDEAD)
 #define STATIC 
 #define INLINE

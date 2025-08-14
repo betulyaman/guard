@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // SUT
 STATIC BOOLEAN prefix_compare(_In_ CONST ART_NODE* node,
@@ -371,3 +373,5 @@ NTSTATUS run_all_prefix_compare_tests()
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

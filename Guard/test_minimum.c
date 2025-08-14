@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // Function under test
 STATIC ART_LEAF* minimum(CONST ART_NODE* node);
@@ -562,3 +564,5 @@ NTSTATUS run_all_minimum_tests()
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

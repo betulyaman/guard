@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // Function under test
 STATIC NTSTATUS remove_child16(_In_ ART_NODE16* node,
@@ -175,8 +177,8 @@ BOOLEAN test_remove_child16_invalid_position()
     ART_NODE16* n16 = t_make_node16_with_children_count(/*count*/ 5, /*first_key*/ 10, &ref, NULL, 0);
     TEST_ASSERT(n16 != NULL, "2-pre: created NODE16(5)");
 
-    // 2.1: pointer outside the array (one-past-the-end pointer; never dereferenced)
-    ART_NODE** bad_leaf_ptr = &n16->children[ARRAYSIZE(n16->children)];
+    // 2.1: pointer outside the array (one-past-the-end)
+    ART_NODE** bad_leaf_ptr = &n16->children[RTL_NUMBER_OF(n16->children)];
     NTSTATUS st = remove_child16(n16, &ref, bad_leaf_ptr);
     TEST_ASSERT(st == STATUS_INVALID_PARAMETER, "2.1: leaf ptr outside children array , invalid parameter");
 
@@ -430,6 +432,99 @@ BOOLEAN test_remove_child16_fi_only_branches_documented()
 }
 
 // ===============================================================
+// Test 10: Removing the only child of NODE16 -> publish NULL and free
+// ===============================================================
+BOOLEAN test_remove_child16_remove_last_child_publish_null()
+{
+    TEST_START("remove_child16: remove last child -> publish NULL");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_NODE16* n16 = (ART_NODE16*)art_create_node(NODE16);
+    TEST_ASSERT(n16 != NULL, "10-pre: NODE16 alloc");
+    n16->base.type = NODE16;
+    n16->base.num_of_child = 1;
+    RtlZeroMemory(n16->keys, sizeof(n16->keys));
+    RtlZeroMemory(n16->children, sizeof(n16->children));
+
+    // add single leaf child at slot 0
+    UCHAR kb[1] = { 'x' };
+    ART_LEAF* lf = make_leaf(kb, 1, 0x33);
+    TEST_ASSERT(lf != NULL, "10-pre: leaf alloc");
+    n16->keys[0] = 0x61; // 'a'
+    n16->children[0] = (ART_NODE*)SET_LEAF(lf);
+    ref = (ART_NODE*)n16;
+
+    ULONG frees_before = g_free_call_count;
+
+    NTSTATUS st = remove_child16(n16, &ref, &n16->children[0]);
+    TEST_ASSERT(NT_SUCCESS(st), "10.1: removal succeeds");
+    TEST_ASSERT(ref == NULL, "10.2: ref published as NULL");
+    TEST_ASSERT(g_free_call_count == frees_before + 1, "10.3: NODE16 freed exactly once");
+    TEST_ASSERT(g_last_freed_tag == ART_TAG, "10.4: freed with ART_TAG");
+
+    // leaf is detached, free it manually
+    if (lf) free_leaf(&lf);
+
+    TEST_END("remove_child16: remove last child -> publish NULL");
+    return TRUE;
+}
+
+// ===============================================================
+// Test 11 : copy_header failure during NODE16->NODE4 shrink -> rollback
+// ===============================================================
+BOOLEAN test_remove_child16_copy_header_failure_rollback()
+{
+    TEST_START("remove_child16 (DEBUG): copy_header failure -> rollback");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_NODE16* n16 = (ART_NODE16*)art_create_node(NODE16);
+    TEST_ASSERT(n16 != NULL, "11-pre: NODE16 alloc");
+    n16->base.type = NODE16;
+    n16->base.num_of_child = 4;
+    RtlZeroMemory(n16->keys, sizeof(n16->keys));
+    RtlZeroMemory(n16->children, sizeof(n16->children));
+
+    // keys = 10,11,12,13 with 4 leaves
+    for (USHORT i = 0; i < 4; ++i) {
+        UCHAR keyb = (UCHAR)(10 + i);
+        UCHAR kbuf[2] = { 'k', keyb };
+        ART_LEAF* lf = make_leaf(kbuf, 2, keyb);
+        TEST_ASSERT(lf != NULL, "11-pre: leaf alloc");
+        n16->keys[i] = keyb;
+        n16->children[i] = (ART_NODE*)SET_LEAF(lf);
+    }
+    ref = (ART_NODE*)n16;
+
+    // Snapshot for rollback (removing slot 1)
+    USHORT before_count = n16->base.num_of_child;
+    UCHAR  saved_keys[4]; for (int i = 0; i < 4; i++) saved_keys[i] = n16->keys[i];
+    ART_NODE* saved_child = n16->children[1];
+
+    // Force copy_header to fail once inside shrink path
+    g_copy_header_fail_once_flag = 1;
+    g_copy_header_fail_status = STATUS_DATA_ERROR;
+
+    NTSTATUS st = remove_child16(n16, &ref, &n16->children[1]);
+    TEST_ASSERT(st == STATUS_DATA_ERROR, "11.1: STATUS_DATA_ERROR bubbled");
+
+    // Verify rollback
+    TEST_ASSERT((ART_NODE16*)ref == n16, "11.2: ref unchanged");
+    TEST_ASSERT(n16->base.num_of_child == before_count, "11.3: count restored");
+    for (int i = 0; i < 4; i++) TEST_ASSERT(n16->keys[i] == saved_keys[i], "11.4: keys restored");
+    TEST_ASSERT(n16->children[1] == saved_child, "11.5: child pointer restored");
+
+    // Cleanup
+    t_free_node16_and_leaf_children(&n16);
+    TEST_END("remove_child16 (DEBUG): copy_header failure -> rollback");
+    return TRUE;
+}
+
+
+// ===============================================================
 // Suite runner
 // ===============================================================
 NTSTATUS run_all_remove_child16_tests()
@@ -450,6 +545,9 @@ NTSTATUS run_all_remove_child16_tests()
     if (!test_remove_child16_resize_to_node4())                 all = FALSE; // 7
     if (!test_remove_child16_alloc_failure_on_shrink())         all = FALSE; // 8
     if (!test_remove_child16_fi_only_branches_documented())     all = FALSE; // 9 (doc)
+    if (!test_remove_child16_remove_last_child_publish_null())  all = FALSE; // 10
+    if (!test_remove_child16_copy_header_failure_rollback())    all = FALSE; // 11
+
 
     LOG_MSG("\n========================================\n");
     if (all) {
@@ -462,3 +560,5 @@ NTSTATUS run_all_remove_child16_tests()
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

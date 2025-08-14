@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 #include <ntstrsafe.h>
 
 #define NUM_SIMULATED_CONTEXTS 10
@@ -466,3 +468,5 @@ NTSTATUS run_all_utf8_key_tests()
 
     return NT_SUCCESS(destroy_tests_status) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

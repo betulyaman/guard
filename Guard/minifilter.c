@@ -1,3 +1,6 @@
+#if UNIT_TEST
+#else
+
 #include "global_context.h"
 
 #include "communication.h"
@@ -9,53 +12,53 @@ NTSTATUS register_filter(_In_ PDRIVER_OBJECT driver_object);
 NTSTATUS filter_unload_callback(FLT_FILTER_UNLOAD_FLAGS flags);
 NTSTATUS filter_tear_down_callback(_In_ PCFLT_RELATED_OBJECTS FltObjects, _In_ FLT_INSTANCE_QUERY_TEARDOWN_FLAGS Flags);
 
-//NTSTATUS DriverEntry(
-//	_In_ PDRIVER_OBJECT driver_object,
-//	_In_ PUNICODE_STRING registry_path)
-//{
-//	UNREFERENCED_PARAMETER(registry_path);
-//
-//	NTSTATUS status = STATUS_SUCCESS;
-//
-//	try {
-//
-//		initalize_global_context();
-//
-//		pending_operation_list_initialize();
-//
-//		status = register_filter(driver_object);
-//		if (!NT_SUCCESS(status)) {
-//			LOG_MSG("register_filter failed. status 0x%x", status);
-//			return status;
-//		}
-//
-//		status = create_communication_port();
-//		if (!NT_SUCCESS(status)) {
-//			LOG_MSG("create_communication_port failed, status: 0x%x", status);
-//			return status;
-//		}
-//
-//		status = FltStartFiltering(g_context.registered_filter);
-//		if (!NT_SUCCESS(status)) {
-//			LOG_MSG("FltStartFiltering failed, status: 0x%x", status);
-//			return status;
-//		}
-//	}
-//	finally {
-//
-//		if (!NT_SUCCESS(status)) {
-//
-//			if (NULL != g_context.server_port) {
-//				FltCloseCommunicationPort(g_context.server_port);
-//			}
-//
-//			if (NULL != g_context.registered_filter) {
-//				FltUnregisterFilter(g_context.registered_filter);
-//			}
-//		}
-//	}
-//	return status;
-//}
+NTSTATUS DriverEntry(
+	_In_ PDRIVER_OBJECT driver_object,
+	_In_ PUNICODE_STRING registry_path)
+{
+	UNREFERENCED_PARAMETER(registry_path);
+
+	NTSTATUS status = STATUS_SUCCESS;
+
+	try {
+
+		initalize_global_context();
+
+		pending_operation_list_initialize();
+
+		status = register_filter(driver_object);
+		if (!NT_SUCCESS(status)) {
+			LOG_MSG("register_filter failed. status 0x%x", status);
+			return status;
+		}
+
+		status = create_communication_port();
+		if (!NT_SUCCESS(status)) {
+			LOG_MSG("create_communication_port failed, status: 0x%x", status);
+			return status;
+		}
+
+		status = FltStartFiltering(g_context.registered_filter);
+		if (!NT_SUCCESS(status)) {
+			LOG_MSG("FltStartFiltering failed, status: 0x%x", status);
+			return status;
+		}
+	}
+	finally {
+
+		if (!NT_SUCCESS(status)) {
+
+			if (NULL != g_context.server_port) {
+				FltCloseCommunicationPort(g_context.server_port);
+			}
+
+			if (NULL != g_context.registered_filter) {
+				FltUnregisterFilter(g_context.registered_filter);
+			}
+		}
+	}
+	return status;
+}
 
 NTSTATUS filter_unload_callback(FLT_FILTER_UNLOAD_FLAGS flags)
 {
@@ -134,3 +137,5 @@ NTSTATUS register_filter(_In_ PDRIVER_OBJECT driver_object)
 
 	return FltRegisterFilter(driver_object, &registration_data, &g_context.registered_filter);
 }
+
+#endif 

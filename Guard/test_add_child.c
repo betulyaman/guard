@@ -1,4 +1,4 @@
-﻿// ========================= test_add_child.c =========================
+﻿#if UNIT_TEST
 #include "test_art.h"
 
 // Function under test
@@ -450,3 +450,5 @@ NTSTATUS run_all_add_child_tests()
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

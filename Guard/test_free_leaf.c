@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // Function under test
 STATIC inline VOID free_leaf(_Inout_ ART_LEAF** leaf);
@@ -112,7 +114,7 @@ BOOLEAN test_free_leaf_double_free_detection_path()
 
     free_leaf(plf);
 
-#ifdef DEBUG
+#if UNIT_TEST
     TEST_ASSERT(g_debugbreak_count == 1, "__debugbreak must be hit once on detection (DEBUG build)");
 #else
     TEST_ASSERT(g_debugbreak_count == 0, "__debugbreak path is disabled in non-DEBUG builds");
@@ -282,3 +284,5 @@ NTSTATUS run_all_free_leaf_tests()
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

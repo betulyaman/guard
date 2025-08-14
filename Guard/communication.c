@@ -195,15 +195,15 @@ NTSTATUS message_notify_callback(
             RtlInitUnicodeStringEx(&unicode_string, policy.path);
 
             if (policy.status == POLICY_STATUS_ADD) {    
-                art_insert(&g_art_tree, &unicode_string, policy.access_mask);
-#if TEST
+                art_insert(&g_art_tree, &unicode_string, policy.access_mask, NULL);
+#if UNIT_TEST
                 LOG_MSG("\n\r----ADD------\n\r");
                 art_print_tree(&g_art_tree);
 #endif
             }
             else if (policy.status == POLICY_STATUS_REMOVE) {
-                art_delete_all_child(&g_art_tree, &unicode_string);
-#if TEST
+                art_delete_subtree(&g_art_tree, &unicode_string);
+#if UNIT_TEST
                 LOG_MSG("\n\r----REMOVE------\n\r");
                 art_print_tree(&g_art_tree);
 #endif

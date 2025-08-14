@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // Function under test
 STATIC ART_LEAF* make_leaf(CONST PUCHAR key, USHORT key_length, ULONG value);
@@ -386,3 +388,5 @@ NTSTATUS run_all_make_leaf_tests()
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

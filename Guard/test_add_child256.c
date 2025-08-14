@@ -1,4 +1,5 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+#include "test_art.h"
 
 // Function under test
 STATIC NTSTATUS add_child256(_Inout_ ART_NODE256* node, _Inout_ ART_NODE** ref, _In_ UCHAR c, _In_ PVOID child);
@@ -485,3 +486,5 @@ NTSTATUS run_all_add_child256_tests()
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST  
+
+#include "test_art.h"
 
 // Under test
 STATIC ART_LEAF* recursive_delete(_In_opt_ ART_NODE* node,
@@ -7,9 +9,8 @@ STATIC ART_LEAF* recursive_delete(_In_opt_ ART_NODE* node,
     _In_ USHORT key_length,
     _In_ USHORT depth);
 
-// ====== tiny helpers (identical to earlier ones; keep once in your suite) ======
+// ====== tiny helpers ======
 static VOID rd_zero(void* p, SIZE_T n) { RtlZeroMemory(p, n); }
-
 static ART_NODE4* rd_make_node4_with_two_leaves(ART_NODE** out_ref,
     UCHAR kA, UCHAR kB,
     ART_LEAF** out_lA,
@@ -372,12 +373,9 @@ BOOLEAN test_recursive_delete_two_level_depth()
 
     ART_NODE* ref = NULL;
     ART_LEAF* leaf = NULL;
-    // Tree for key { 'p','q','r' }
     ART_NODE4* root = rd_make_two_level_internal_then_leaf(&ref, 'p', 'q', 'r', &leaf);
     TEST_ASSERT(root != NULL, "7-pre: two-level tree created");
 
-    // 'depth' is relative to the full key. We're starting at the child under 'q',
-    // so the next byte to consume is 'r' at index 2 => depth=2.
     UCHAR full_key[3] = { 'p','q','r' };
     ART_NODE** child_slot = &(((ART_NODE4*)ref)->children[0]);
     ART_NODE* child_node = *child_slot;
@@ -387,7 +385,6 @@ BOOLEAN test_recursive_delete_two_level_depth()
     TEST_ASSERT(out == leaf, "7.1: removed deeper leaf");
     if (out) free_leaf(&out);
 
-    // Clean up whatever remains: root may now be empty/collapsed depending on remove path.
     if (ref) {
         if (IS_LEAF(ref)) {
             ART_LEAF* remain = LEAF_RAW(ref);
@@ -414,13 +411,13 @@ NTSTATUS run_all_recursive_delete_tests()
 
     BOOLEAN all = TRUE;
 
-    if (!test_recursive_delete_guards())               all = FALSE; // 1
-    if (!test_recursive_delete_leaf_match())           all = FALSE; // 2
-    if (!test_recursive_delete_leaf_no_match())        all = FALSE; // 3
-    if (!test_recursive_delete_prefix_mismatch())      all = FALSE; // 4
-    if (!test_recursive_delete_prefix_match_delete())  all = FALSE; // 5
-    if (!test_recursive_delete_missing_child())        all = FALSE; // 6
-    if (!test_recursive_delete_two_level_depth())      all = FALSE; // 7
+    if (!test_recursive_delete_guards())               all = FALSE;
+    if (!test_recursive_delete_leaf_match())           all = FALSE;
+    if (!test_recursive_delete_leaf_no_match())        all = FALSE;
+    if (!test_recursive_delete_prefix_mismatch())      all = FALSE;
+    if (!test_recursive_delete_prefix_match_delete())  all = FALSE;
+    if (!test_recursive_delete_missing_child())        all = FALSE;
+    if (!test_recursive_delete_two_level_depth())      all = FALSE;
 
     LOG_MSG("\n========================================\n");
     if (all) {
@@ -433,3 +430,5 @@ NTSTATUS run_all_recursive_delete_tests()
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

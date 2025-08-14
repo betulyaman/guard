@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // Function under test
 STATIC NTSTATUS remove_child48(_In_ ART_NODE48* node,
@@ -363,6 +365,165 @@ BOOLEAN test_remove_child48_repack_null_child_rollback()
 }
 
 // ===============================================================
+// Test 7: Remove last child -> publish NULL and free old NODE48
+// ===============================================================
+BOOLEAN test_remove_child48_remove_last_child_publish_null()
+{
+    TEST_START("remove_child48: remove last child -> publish NULL");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_NODE48* n48 = t_make_node48_with_children_count(/*count*/ 1, /*first_key*/ 200,
+        &ref, NULL, 0);
+    TEST_ASSERT(n48 != NULL, "7-pre: make NODE48(1)");
+    TEST_ASSERT(n48->base.num_of_child == 1, "7-pre: count==1");
+    UCHAR rem = 200;
+
+    ULONG frees_before = g_free_call_count;
+
+    NTSTATUS st = remove_child48(n48, &ref, rem);
+    TEST_ASSERT(NT_SUCCESS(st), "7.1: success");
+    TEST_ASSERT(ref == NULL, "7.2: ref published as NULL");
+    TEST_ASSERT(g_free_call_count == frees_before + 1, "7.3: old NODE48 freed exactly once");
+
+    // Note: n48 is freed here; do not access it.
+    TEST_END("remove_child48: remove last child -> publish NULL");
+    return TRUE;
+}
+
+#if DEBUG
+// ===============================================================
+// Test 8 (DEBUG): copy_header failure during shrink -> rollback
+// ===============================================================
+BOOLEAN test_remove_child48_copy_header_failure_rollback()
+{
+    TEST_START("remove_child48 (DEBUG): copy_header failure -> rollback");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_NODE48* n48 = t_make_node48_with_children_count(/*count*/ 13, /*first_key*/ 90,
+        &ref, NULL, 0);
+    TEST_ASSERT(n48 != NULL, "8-pre: make NODE48(13)");
+    UCHAR rem = 95;
+    TEST_ASSERT(n48->child_index[rem] != 0, "8-pre: removable key exists");
+
+    // Snapshot for rollback
+    USHORT before_cnt = n48->base.num_of_child;
+    UCHAR  pos1b = n48->child_index[rem];
+    ART_NODE* saved = n48->children[pos1b - 1];
+
+    // Force copy_header to fail once
+    g_copy_header_fail_once_flag = 1;
+    g_copy_header_fail_status = STATUS_DATA_ERROR;
+
+    NTSTATUS st = remove_child48(n48, &ref, rem);
+    TEST_ASSERT(st == STATUS_DATA_ERROR, "8.1: copy_header failure bubbled");
+
+    // Verify rollback
+    TEST_ASSERT(n48->base.num_of_child == before_cnt, "8.2: count restored");
+    TEST_ASSERT(n48->child_index[rem] == pos1b, "8.3: mapping restored");
+    TEST_ASSERT(n48->children[pos1b - 1] == saved, "8.4: child ptr restored");
+    TEST_ASSERT((ART_NODE48*)ref == n48, "8.5: ref unchanged");
+
+    t_free_node48_and_leaf_children(&n48);
+    TEST_END("remove_child48 (DEBUG): copy_header failure -> rollback");
+    return TRUE;
+}
+#endif
+
+// ===============================================================
+// Test 9: Out-of-range map (>48) during repack -> DATA_ERROR + rollback
+// ===============================================================
+BOOLEAN test_remove_child48_repack_index_oob_rollback()
+{
+    TEST_START("remove_child48: repack index >48 -> rollback");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_NODE48* n48 = t_make_node48_with_children_count(/*count*/ 13, /*first_key*/ 40,
+        &ref, NULL, 0);
+    TEST_ASSERT(n48 != NULL, "9-pre: make NODE48(13)");
+
+    // Choose key to remove
+    UCHAR rem = 45;
+    TEST_ASSERT(n48->child_index[rem] != 0, "9-pre: removable key exists");
+
+    // Pick another key (not 'rem') to corrupt in the map
+    UCHAR corrupt_key = 50;
+    TEST_ASSERT(corrupt_key != rem, "9-pre: pick distinct corrupt key");
+    UCHAR saved_map = n48->child_index[corrupt_key];
+    TEST_ASSERT(saved_map != 0, "9-pre: corrupt_key mapped");
+    n48->child_index[corrupt_key] = 49; // invalid (valid range 1..48)
+
+    // Rollback snapshot for 'rem'
+    USHORT before_cnt = n48->base.num_of_child;
+    UCHAR  rem_pos1b = n48->child_index[rem];
+    ART_NODE* rem_ptr = n48->children[rem_pos1b - 1];
+
+    NTSTATUS st = remove_child48(n48, &ref, rem);
+    TEST_ASSERT(st == STATUS_DATA_ERROR, "9.1: DATA_ERROR on out-of-range map");
+
+    // Verify rollback
+    TEST_ASSERT(n48->base.num_of_child == before_cnt, "9.2: count restored");
+    TEST_ASSERT(n48->child_index[rem] == rem_pos1b, "9.3: mapping restored");
+    TEST_ASSERT(n48->children[rem_pos1b - 1] == rem_ptr, "9.4: child ptr restored");
+    TEST_ASSERT((ART_NODE48*)ref == n48, "9.5: ref unchanged");
+
+    // Restore corrupted entry for cleanup
+    n48->child_index[corrupt_key] = saved_map;
+
+    t_free_node48_and_leaf_children(&n48);
+    TEST_END("remove_child48: repack index >48 -> rollback");
+    return TRUE;
+}
+
+// ===============================================================
+// Test 10: Survivor count mismatch -> DATA_ERROR + rollback
+// ===============================================================
+BOOLEAN test_remove_child48_survivor_count_mismatch_rollback()
+{
+    TEST_START("remove_child48: survivor count mismatch -> rollback");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL;
+    ART_NODE48* n48 = t_make_node48_with_children_count(/*count*/ 13, /*first_key*/ 10,
+        &ref, NULL, 0);
+    TEST_ASSERT(n48 != NULL, "10-pre: make NODE48(13)");
+
+    // Inflate metadata count artificially
+    n48->base.num_of_child = 20;
+
+    // Remove one key: metadata will drop to 19, real survivor count will be 12
+    UCHAR rem = 15;
+    TEST_ASSERT(n48->child_index[rem] != 0, "10-pre: removable key exists");
+
+    // Rollback snapshot for 'rem'
+    UCHAR  rem_pos1b = n48->child_index[rem];
+    ART_NODE* rem_ptr = n48->children[rem_pos1b - 1];
+
+    NTSTATUS st = remove_child48(n48, &ref, rem);
+    TEST_ASSERT(st == STATUS_DATA_ERROR, "10.1: mismatch detected -> DATA_ERROR");
+
+    // Verify rollback
+    TEST_ASSERT((ART_NODE48*)ref == n48, "10.2: ref unchanged");
+    TEST_ASSERT(n48->child_index[rem] == rem_pos1b, "10.3: mapping restored");
+    TEST_ASSERT(n48->children[rem_pos1b - 1] == rem_ptr, "10.4: child restored");
+    TEST_ASSERT(n48->base.num_of_child == 20, "10.5: count restored");
+
+    // Fix metadata for cleanup
+    n48->base.num_of_child = 13;
+    t_free_node48_and_leaf_children(&n48);
+
+    TEST_END("remove_child48: survivor count mismatch -> rollback");
+    return TRUE;
+}
+
+
+// ===============================================================
 // Suite runner
 // ===============================================================
 NTSTATUS run_all_remove_child48_tests()
@@ -379,6 +540,10 @@ NTSTATUS run_all_remove_child48_tests()
     if (!test_remove_child48_resize_to_node16())               all = FALSE; // 4
     if (!test_remove_child48_alloc_failure_rollback())         all = FALSE; // 5
     if (!test_remove_child48_repack_null_child_rollback())     all = FALSE; // 6
+    if (!test_remove_child48_remove_last_child_publish_null())  all = FALSE; // 7
+    if (!test_remove_child48_copy_header_failure_rollback())    all = FALSE; // 8
+    if (!test_remove_child48_repack_index_oob_rollback())       all = FALSE; // 9
+    if (!test_remove_child48_survivor_count_mismatch_rollback())all = FALSE; // 10
 
     LOG_MSG("\n========================================\n");
     if (all) {
@@ -391,3 +556,5 @@ NTSTATUS run_all_remove_child48_tests()
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

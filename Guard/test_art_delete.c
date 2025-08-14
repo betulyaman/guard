@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // Under test
 ULONG art_delete(_Inout_ ART_TREE* tree, _In_ PCUNICODE_STRING unicode_key);
@@ -419,6 +421,175 @@ BOOLEAN test_art_delete_rejects_overlong_key()
 #endif
 }
 
+// ===============================
+// EXTRA TESTS for art_delete()
+// ===============================
+#if UNIT_TEST
+
+// Bu dosyada zaten tanımlı yardımcılar kullanılıyor:
+//  - ad_zero, ad_make_single_leaf_tree, ad_make_node4_two_leaves,
+//  - ad_make_prefixed_node4_one_leaf, ad_free_tree,
+//  - ad_make_unicode, ad_free_unicode
+// Eğer bazıları farklı isimlerdeyse uyarlayın.
+
+static BOOLEAN ad_make_node4_with_terminator_leaf(ART_TREE* tree,
+    UCHAR p0, UCHAR p1,
+    ULONG val)
+{
+    ad_zero(tree, sizeof(*tree));
+    ART_NODE4* n4 = (ART_NODE4*)art_create_node(NODE4);
+    if (!n4) return FALSE;
+    n4->base.type = NODE4;
+    n4->base.prefix_length = 2;
+    ad_zero(n4->base.prefix, sizeof(n4->base.prefix));
+    n4->base.prefix[0] = p0;
+    n4->base.prefix[1] = p1;
+
+    UCHAR full[2] = { p0, p1 };
+    ART_LEAF* lf = make_leaf(full, 2, val);
+    if (!lf) { free_node((ART_NODE**)&n4); return FALSE; }
+
+    // Terminator edge = 0
+    for (int i = 0; i < 4; ++i) { n4->keys[i] = 0; n4->children[i] = NULL; }
+    n4->keys[0] = 0;
+    n4->children[0] = (ART_NODE*)SET_LEAF(lf);
+    n4->base.num_of_child = 1;
+
+    tree->root = (ART_NODE*)n4;
+    tree->size = 1;
+    return TRUE;
+}
+
+// EX1: Çok baytlı UTF-8 (tek karakter) silme – "ü" (C3 BC)
+BOOLEAN test_art_delete_multibyte_utf8_single_char()
+{
+    TEST_START("art_delete[EX]: UTF-8 multibyte single char (\"ü\")");
+
+    reset_mock_state();
+
+    ART_TREE t;
+    UCHAR key_utf8[2] = { 0xC3, 0xBC }; // "ü"
+    TEST_ASSERT(ad_make_single_leaf_tree(&t, key_utf8, 2, 0xD1), "EX1-pre: leaf(\"ü\") built");
+
+    UNICODE_STRING uk = { 0 };
+    NTSTATUS st = ad_make_unicode(&uk, L"ü", 1);
+    TEST_ASSERT(NT_SUCCESS(st), "EX1-pre: unicode \"ü\"");
+
+    ULONG old = art_delete(&t, &uk);
+    TEST_ASSERT(old == 0xD1, "EX1.1: returns old value");
+    TEST_ASSERT(t.size == 0 && t.root == NULL, "EX1.2: tree empty");
+
+    ad_free_unicode(&uk);
+    TEST_END("art_delete[EX]: UTF-8 multibyte single char (\"ü\")");
+    return TRUE;
+}
+
+// EX2: Terminator edge (prefix tam eşleşme, depth==keylen) silme – "ab"
+BOOLEAN test_art_delete_terminator_edge_exact_match()
+{
+    TEST_START("art_delete[EX]: terminator-edge exact match (\"ab\")");
+
+    reset_mock_state();
+
+    ART_TREE t;
+    TEST_ASSERT(ad_make_node4_with_terminator_leaf(&t, 'a', 'b', 0xEE), "EX2-pre: NODE4(prefix=\"ab\") + term leaf");
+
+    UNICODE_STRING uk = { 0 };
+    NTSTATUS st = ad_make_unicode(&uk, L"ab", 2);
+    TEST_ASSERT(NT_SUCCESS(st), "EX2-pre: unicode \"ab\"");
+
+    ULONG old = art_delete(&t, &uk);
+    TEST_ASSERT(old == 0xEE, "EX2.1: returns old value");
+    TEST_ASSERT(t.size == 0 && t.root == NULL, "EX2.2: tree empty");
+
+    ad_free_unicode(&uk);
+    TEST_END("art_delete[EX]: terminator-edge exact match (\"ab\")");
+    return TRUE;
+}
+
+// EX3: NODE4 iki çocuk -> birini silince kökün leaf'e çökmesini doğrula
+BOOLEAN test_art_delete_node4_collapse_to_leaf()
+{
+    TEST_START("art_delete[EX]: NODE4 collapse to leaf after first deletion");
+
+    reset_mock_state();
+
+    ART_TREE t;
+    TEST_ASSERT(ad_make_node4_two_leaves(&t, 'a', 0x11, 'b', 0x22), "EX3-pre: NODE4{a,b}");
+
+    UNICODE_STRING uka = { 0 };
+    NTSTATUS st = ad_make_unicode(&uka, L"a", 1);
+    TEST_ASSERT(NT_SUCCESS(st), "EX3-pre: unicode \"a\"");
+
+    ULONG old = art_delete(&t, &uka);
+    TEST_ASSERT(old == 0x11, "EX3.1: returns old for 'a'");
+    TEST_ASSERT(t.size == 1, "EX3.2: size==1");
+    TEST_ASSERT(t.root != NULL && IS_LEAF(t.root), "EX3.3: root collapsed to leaf");
+    ad_free_unicode(&uka);
+
+    // Cleanup remaining (delete 'b' to keep heap clean)
+    UNICODE_STRING ukb = { 0 };
+    st = ad_make_unicode(&ukb, L"b", 1);
+    TEST_ASSERT(NT_SUCCESS(st), "EX3-pre2: unicode \"b\"");
+    (void)art_delete(&t, &ukb);
+    ad_free_unicode(&ukb);
+
+    TEST_END("art_delete[EX]: NODE4 collapse to leaf after first deletion");
+    return TRUE;
+}
+
+// EX4: size==0 iken gerçek silme – alt sayım negatif/underflow olmamalı
+BOOLEAN test_art_delete_with_size_zero_guard()
+{
+    TEST_START("art_delete[EX]: size==0 while deleting (no underflow)");
+
+    reset_mock_state();
+
+    ART_TREE t;
+    UCHAR a = 'a';
+    TEST_ASSERT(ad_make_single_leaf_tree(&t, &a, 1, 0x99), "EX4-pre: single leaf");
+    t.size = 0; // kasıtlı: koruma kodunu test et
+
+    UNICODE_STRING uk = { 0 };
+    NTSTATUS st = ad_make_unicode(&uk, L"a", 1);
+    TEST_ASSERT(NT_SUCCESS(st), "EX4-pre: unicode \"a\"");
+
+    ULONG old = art_delete(&t, &uk);
+    TEST_ASSERT(old == 0x99, "EX4.1: delete still returns value");
+    TEST_ASSERT(t.size == 0 && t.root == NULL, "EX4.2: size stays 0, root NULL");
+
+    ad_free_unicode(&uk);
+    TEST_END("art_delete[EX]: size==0 while deleting (no underflow)");
+    return TRUE;
+}
+
+// EX5: Çok baytlı iki karakter (toplam 4 bayt) – "çö" (C3 A7  C3 B6)
+BOOLEAN test_art_delete_multibyte_two_chars()
+{
+    TEST_START("art_delete[EX]: UTF-8 multibyte two chars (\"çö\")");
+
+    reset_mock_state();
+
+    ART_TREE t;
+    UCHAR key_utf8[4] = { 0xC3, 0xA7, 0xC3, 0xB6 }; // "çö"
+    TEST_ASSERT(ad_make_single_leaf_tree(&t, key_utf8, 4, 0xCAFE), "EX5-pre: leaf(\"çö\") built");
+
+    UNICODE_STRING uk = { 0 };
+    NTSTATUS st = ad_make_unicode(&uk, L"çö", 2);
+    TEST_ASSERT(NT_SUCCESS(st), "EX5-pre: unicode \"çö\"");
+
+    ULONG old = art_delete(&t, &uk);
+    TEST_ASSERT(old == 0xCAFE, "EX5.1: returns old value");
+    TEST_ASSERT(t.size == 0 && t.root == NULL, "EX5.2: tree empty");
+
+    ad_free_unicode(&uk);
+    TEST_END("art_delete[EX]: UTF-8 multibyte two chars (\"çö\")");
+    return TRUE;
+}
+#endif // UNIT_TEST
+
+
+
 // ===============================================================
 // Suite runner
 // ===============================================================
@@ -437,6 +608,12 @@ NTSTATUS run_all_art_delete_tests()
     if (!test_art_delete_with_prefix_path())   all = FALSE;   // 5
     if (!test_art_delete_double_delete())      all = FALSE;   // 6
     if (!test_art_delete_rejects_overlong_key()) all = FALSE; // 7 (optional)
+    if (!test_art_delete_multibyte_utf8_single_char()) all = FALSE; // EX1
+    if (!test_art_delete_terminator_edge_exact_match()) all = FALSE; // EX2
+    if (!test_art_delete_node4_collapse_to_leaf())      all = FALSE; // EX3
+    if (!test_art_delete_with_size_zero_guard())        all = FALSE; // EX4
+    if (!test_art_delete_multibyte_two_chars())         all = FALSE; // EX5
+
 
     LOG_MSG("\n========================================\n");
     if (all) {
@@ -449,3 +626,5 @@ NTSTATUS run_all_art_delete_tests()
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif

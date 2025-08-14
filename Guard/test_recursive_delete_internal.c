@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 // Function under test
 STATIC ART_LEAF* recursive_delete_internal(_In_ ART_NODE* node,
@@ -542,6 +544,119 @@ BOOLEAN test_recursive_delete_internal_long_prefix_delete()
     return TRUE;
 }
 
+BOOLEAN test_recursive_delete_internal_key_shorter_than_prefix()
+{
+    TEST_START("recursive_delete_internal: key shorter than full logical prefix");
+
+    reset_mock_state();
+
+    ART_NODE* ref = NULL; ART_LEAF* leaf = NULL;
+    // root prefix 'x', child 'y' altında leaf → efektif logical prefix "xy"
+    ART_NODE4* n4 = t_make_node4_with_prefix_and_leaf(&ref, 'x', 'y', &leaf);
+    TEST_ASSERT(n4 && leaf, "pre: node with prefix+leaf");
+
+    UCHAR shortKey[1] = { 'x' }; // full logical prefix "xy" ile eşleşmiyor
+    ART_LEAF* out = recursive_delete_internal((ART_NODE*)n4, &ref, shortKey, 1, 0, 0);
+    TEST_ASSERT(out == NULL, "returns NULL on short key vs full logical prefix");
+
+    t_free_tree_best_effort(&ref);
+
+    TEST_END("recursive_delete_internal: key shorter than prefix");
+    return TRUE;
+}
+
+BOOLEAN test_recursive_delete_internal_terminator_mismatch()
+{
+    TEST_START("recursive_delete_internal: terminator present but leaf mismatch");
+
+    reset_mock_state();
+
+    ART_NODE4* n4 = (ART_NODE4*)art_create_node(NODE4);
+    TEST_ASSERT(n4, "pre: NODE4");
+    n4->base.type = NODE4; n4->base.prefix_length = 2; n4->base.num_of_child = 1;
+    n4->base.prefix[0] = 'a'; n4->base.prefix[1] = 'b';
+    t_zero(n4->keys, sizeof(n4->keys)); t_zero(n4->children, sizeof(n4->children));
+
+    UCHAR k_ab[2] = { 'a','b' };
+    ART_LEAF* lf = make_leaf(k_ab, 2, 0xEF);
+    TEST_ASSERT(lf, "leaf");
+    n4->keys[0] = 0; // terminator
+    n4->children[0] = (ART_NODE*)SET_LEAF(lf);
+
+    ART_NODE* ref = (ART_NODE*)n4;
+
+    UCHAR k_ac[2] = { 'a','c' }; // aynı uzunluk ama içerik farklı
+    ART_LEAF* out = recursive_delete_internal((ART_NODE*)n4, &ref, k_ac, 2, 0, 0);
+    TEST_ASSERT(out == NULL, "no delete on terminator mismatch");
+    TEST_ASSERT(ref == (ART_NODE*)n4, "tree unchanged");
+
+    // cleanup
+    t_free_tree_best_effort(&ref);
+
+    TEST_END("recursive_delete_internal: terminator present but leaf mismatch");
+    return TRUE;
+}
+
+BOOLEAN test_recursive_delete_internal_node48_deep_delete_last_child()
+{
+    TEST_START("recursive_delete_internal: NODE48 deep delete (edge param) last child");
+
+    reset_mock_state();
+
+    // Kökte NODE48 ve tek çocuk: edge 'x' altında leaf "x"
+    ART_NODE* ref = NULL; ART_LEAF* lf = NULL;
+    const UCHAR edge = 'x';
+
+    ART_NODE48* n48 = (ART_NODE48*)art_create_node(NODE48);
+    TEST_ASSERT(n48, "pre: NODE48");
+    n48->base.type = NODE48; n48->base.num_of_child = 0;
+    t_zero(n48->child_index, sizeof(n48->child_index));
+    t_zero(n48->children, sizeof(n48->children));
+
+    UCHAR kx[1] = { edge };
+    lf = make_leaf(kx, 1, 0x55);
+    TEST_ASSERT(lf, "leaf");
+    n48->children[0] = (ART_NODE*)SET_LEAF(lf);
+    n48->child_index[edge] = 1; // map 'x' -> children[0]
+    n48->base.num_of_child = 1;
+    ref = (ART_NODE*)n48;
+
+    ART_LEAF* out = recursive_delete_internal((ART_NODE*)n48, &ref, kx, 1, 0, 0);
+    TEST_ASSERT(out == lf, "returned leaf");
+    TEST_ASSERT(ref == NULL, "root freed after last child removal");
+
+    if (out) free_leaf(&out);
+
+    TEST_END("recursive_delete_internal: NODE48 deep delete (edge param) last child");
+    return TRUE;
+}
+
+BOOLEAN test_recursive_delete_internal_depth_overflow_guard()
+{
+    TEST_START("recursive_delete_internal: depth overflow guard");
+
+    reset_mock_state();
+
+    ART_NODE4* n4 = (ART_NODE4*)art_create_node(NODE4);
+    TEST_ASSERT(n4, "pre");
+    n4->base.type = NODE4; n4->base.prefix_length = 2; n4->base.num_of_child = 0;
+    n4->base.prefix[0] = 'p'; n4->base.prefix[1] = 'q';
+
+    ART_NODE* ref = (ART_NODE*)n4;
+    UCHAR key[3] = { 'p','q','r' }; // içerik önemli değil; overflow’a bakıyoruz
+
+    // depth o kadar büyük ki depth + prefix_length taşsın
+    USHORT huge_depth = (USHORT)0xFFFF; // (depth + 2) mod 16-bit < depth → overflow algılanır
+    ART_LEAF* out = recursive_delete_internal((ART_NODE*)n4, &ref, key, 3, huge_depth, 0);
+    TEST_ASSERT(out == NULL, "overflow -> NULL");
+
+    t_free_tree_best_effort(&ref);
+
+    TEST_END("recursive_delete_internal: depth overflow guard");
+    return TRUE;
+}
+
+
 // ===============================================================
 // Suite runner
 // ===============================================================
@@ -564,6 +679,11 @@ NTSTATUS run_all_recursive_delete_internal_tests()
     if (!test_recursive_delete_internal_recursion_limit())     all = FALSE; // 9
     if (!test_recursive_delete_internal_terminator_delete())   all = FALSE; // A
     if (!test_recursive_delete_internal_long_prefix_delete())  all = FALSE; // B
+    if (!test_recursive_delete_internal_key_shorter_than_prefix())  all = FALSE;
+    if (!test_recursive_delete_internal_terminator_mismatch())      all = FALSE;
+    if (!test_recursive_delete_internal_node48_deep_delete_last_child()) all = FALSE;
+    if (!test_recursive_delete_internal_depth_overflow_guard())     all = FALSE;
+
 
     LOG_MSG("\n========================================\n");
     if (all) {
@@ -576,3 +696,6 @@ NTSTATUS run_all_recursive_delete_internal_tests()
 
     return all ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif
+

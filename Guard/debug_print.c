@@ -1,4 +1,5 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+#include "test_art.h"
 
 #define MAX_PRINT_DEPTH 32
 #define INDENT_SIZE 2
@@ -416,3 +417,5 @@ BOOLEAN art_validate_tree_quick(_In_opt_ ART_TREE* tree) {
         return FALSE;
     }
 }
+
+#endif

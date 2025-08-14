@@ -1,4 +1,6 @@
-﻿#include "test_art.h"
+﻿#if UNIT_TEST
+
+#include "test_art.h"
 
 STATIC NTSTATUS art_init_tree(ART_TREE* tree);
 
@@ -236,3 +238,5 @@ NTSTATUS run_all_art_init_tree_tests()
 
     return all_passed ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 }
+
+#endif
